@@ -7,7 +7,7 @@ license = "MIT"
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "numpy>=1.26",
-    "pandas>=2.2",
+    "polars>=1.20",
     "pyarrow>=16",
 ]
 
@@ -28,7 +28,7 @@ analysis = [
 ]
 # Versioned data exchange with collaborators (`dvc pull`).
 dvc = [
-    "dvc[s3,webdav,ssh]>=3.50",
+    "dvc[s3,webdav,ssh,gdrive]>=3.50",
 ]
 
 [dependency-groups]
@@ -40,6 +40,9 @@ dev = [
 [project.scripts]
 pyro-sync = "pyro.sync:main"
 pyro-events = "pyro.events:main"
+pyro-match = "pyro.match:main"
+pyro-icon = "pyro.icon_ppe:main"
+pyro-query = "pyro.store:main"
 
 [build-system]
 requires = ["hatchling>=1.25"]

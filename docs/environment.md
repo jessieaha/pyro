@@ -12,7 +12,7 @@ There is one image definition (`Dockerfile`) and one lock file (`uv.lock`). Code
 
 ## Contents
 
-- Python 3.12 (Debian bookworm slim) with locked dependencies from `uv.lock`. Core: numpy, pandas, pyarrow. `analysis` extra: xarray, netCDF4, h5netcdf, dask, scipy, pyproj, shapely, earthaccess, cdsapi, s3fs, matplotlib. `dvc` extra: dvc with s3, webdav and ssh support.
+- Python 3.12 (Debian bookworm slim) with locked dependencies from `uv.lock`. Core: numpy, polars, pyarrow. `analysis` extra: xarray, netCDF4, h5netcdf, dask, scipy, pyproj, shapely, earthaccess, cdsapi, s3fs, matplotlib. `dvc` extra: dvc with s3, webdav and ssh support.
 - Command-line tools: `cdo`, `nco`, `ncdump` and `rclone`.
 - Entry points: `pyro-sync` and `pyro-events`.
 
