@@ -4,7 +4,7 @@ This project compares pyroCb and matched non-pyroCb fires in AeroCom and multi-m
 
 Aerosol side: Jessie Zhang (VU Amsterdam). Fire side (event detection and matching): Jelle Kraak (VU Amsterdam).
 
-> **Status:** planning and scaffold. Step 1 is model and satellite preparation around the 2024 boreal event list. The sync tool and the event-table utilities work; the extraction, download and collocation modules are planned in [`docs/pipeline_plan.md`](docs/pipeline_plan.md).
+> **Status:** step 1 in progress. Working: the sync tool (Google Drive / S3 / Research Drive), event-table utilities, event × SPEXone matching with 3-hourly PPE sampling (`pyro-match`), the ICON-HAM PPE parquet store (`pyro-icon`) and in-place parquet queries (`pyro-query`). Corridors, VIIRS download and full collocation are planned in [`docs/pipeline_plan.md`](docs/pipeline_plan.md). All tables use polars.
 
 ## Project flowchart
 
@@ -17,8 +17,9 @@ flowchart TD
 
   subgraph MODEL["Model extraction (Snellius)"]
     PPE["ECHAM-HAM PPE, 251 members<br/>3-hourly, Aug 2024 - Jul 2025"]
-    MM["Multi-model PPE 2025<br/>6-hourly"]
     AC["AeroCom 3-hourly 2024-25<br/>(go/no-go)"]
+    MM["Multi-model PPE 2025, 6-hourly<br/>context only"]
+    ICON["ICON-HAM PPE 2024-25, 392 members<br/>monthly, context only"]
   end
 
   subgraph OBS["Satellite and ground retrievals"]
@@ -28,11 +29,15 @@ flowchart TD
     AERO["AERONET V3"]
   end
 
+  EV --> MATCH["Event x SPEXone match, all events<br/>pyro-match: 150 / 500 / 1000 km rings"]
+  SPEX --> MATCH
+  PPE -->|"3-hourly, all members"| MATCH
+  MATCH --> COL
+  ICON --> ICONPQ[("ICON-HAM parquet store<br/>pyro-icon, all variables")]
   EV --> WIN["Event windows and plume corridors<br/>onset -1 d to +10 d, ERA5 trajectories"]
   CT --> WIN
   WIN --> SUB["Model subsets<br/>boreal band, union of event windows"]
   PPE --> SUB
-  MM --> SUB
   AC --> SUB
   WIN --> DL["Satellite download<br/>earthaccess, NOAA CLASS"]
   SPEX --> DL
@@ -50,14 +55,20 @@ flowchart TD
 
   subgraph STORE["Storage and sync layer"]
     SNEL[("Snellius project space<br/>raw model output, compute")]
-    S3[("SURF Object Store, S3<br/>shared, DVC remote")]
-    RD[("SURF Research Drive<br/>fallback, exchange")]
+    SCR[("scratch-shared working copy<br/>keep-alive job every 12 d")]
+    GD[("VU Google Drive, 1 TB<br/>shared parquet store, DVC default remote")]
+    S3[("SURF Object Store, S3<br/>upgrade path beyond 1 TB")]
+    RD[("SURF Research Drive<br/>exchange with fire side")]
   end
 
   SNEL --- PPE
-  SUB -.->|"pyro-sync"| S3
-  COL -.->|"pyro-sync / dvc push"| S3
-  AGG -.->|"pyro-sync / dvc push"| S3
+  ICONPQ --- SCR
+  SUB -.->|"pyro-sync"| GD
+  ICONPQ -.->|"pyro-sync"| GD
+  COL -.->|"pyro-sync / dvc push"| GD
+  AGG -.->|"pyro-sync / dvc push"| GD
+  GD -.->|"pyro-query in place"| AGG
+  GD -.->|"if > 1 TB"| S3
   EV -.->|"restricted, private remotes only"| RD
 ```
 
@@ -73,6 +84,11 @@ TROPOMI aerosol products are not used.
 | `docs/environment.md` | Devcontainer / Docker / Apptainer (Snellius, ADA) / Kubernetes |
 | `src/pyro/sync.py`, `scripts/sync.sh` | `pyro-sync`: rclone-based, config-driven sync (dry-run default) |
 | `src/pyro/events.py` | `pyro-events`: event-table validation, windows, period coverage |
+| `src/pyro/match.py` | `pyro-match`: all events × SPEXone pixels, super-obs, 3-hourly PPE sampling (all members) |
+| `src/pyro/icon_ppe.py` | `pyro-icon`: ICON-HAM PPE netCDF → partitioned parquet store, with verification |
+| `src/pyro/store.py` | `pyro-query`: polars queries on local parquet or in place on Drive via `rclone serve s3` |
+| `scripts/gdrive_setup.sh` | Link the VU Google Drive to rclone (interactive, token stays outside the repo) |
+| `scripts/scratch_keepalive.sh` | Single self-resubmitting job that refreshes scratch every 12 days |
 | `config/` | `sync.toml` (datasets, remotes), `*.example` templates; `local.env` is gitignored |
 | `Dockerfile`, `.devcontainer/`, `containers/`, `k8s/` | Portable environment |
 | `.dvc/` | DVC remotes (placeholders; real URLs go in `.dvc/config.local`) |
@@ -85,7 +101,9 @@ cp config/local.env.example config/local.env   # machine paths only, gitignored
 uv run pytest
 uv run pyro-events coverage "$PYRO_DATA_ROOT/events/<event_table>.csv"
 scripts/sync.sh remotes                   # which storage remotes are configured
-scripts/sync.sh push model_subsets -r surf_s3   # dry run
+scripts/gdrive_setup.sh                   # once: link the VU Google Drive
+scripts/sync.sh push icon_ppe -r gdrive   # dry run
+uv run pyro-match "$PYRO_DATA_ROOT/events/<event_table>.csv"
 ```
 
 ## Data and credentials policy
