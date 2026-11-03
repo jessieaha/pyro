@@ -1,0 +1,132 @@
+# pyro-sync configuration (committed; contains no paths specific to one machine and no secrets).
+#
+# ${VAR} / ${VAR:-default} are expanded from the environment, which pyro-sync
+# first fills from config/local.env (gitignored; copy config/local.env.example).
+# rclone remotes are defined via RCLONE_CONFIG_<NAME>_* environment variables
+# (template: config/remotes.env.example) or the user's own `rclone config`.
+
+data_root = "${PYRO_DATA_ROOT}"
+
+# Excluded from every transfer, in both directions, regardless of dataset rules.
+# GLD360 lightning data is licensed; credential files must never leave the machine.
+never_sync = [
+    "*GLD360*",
+    "*gld360*",
+    "**/GLD360/**",
+    "**/lightning_raw/**",
+    ".netrc",
+    ".cdsapirc",
+    "rclone.conf",
+    "*.env",
+    "**/.git/**",
+]
+
+[defaults]
+transfers = 8
+checkers = 16
+log_dir = "${PYRO_DATA_ROOT}/logs/sync"
+
+[slurm]
+# Snellius: data transfers belong on the `staging` partition.
+partition = "${PYRO_SLURM_PARTITION:-staging}"
+time = "${PYRO_SLURM_TIME:-04:00:00}"
+cpus = "${PYRO_SLURM_CPUS:-4}"
+account = "${PYRO_SLURM_ACCOUNT:-}"
+
+# ---------------------------------------------------------------- remotes
+# public        : anyone can read it. Restricted datasets are always refused.
+# restricted_ok : private remote, access-controlled to the project team; may hold
+#                 unpublished event tables and event-keyed products.
+# checksum      : compare hashes (S3 MD5, WebDAV SHA1/MD5, Drive MD5, SFTP md5sum).
+
+[remotes.surf_s3]
+rclone_remote = "pyros3"
+root = "${PYRO_S3_BUCKET:-pyro}"
+public = false
+restricted_ok = true
+checksum = true
+description = "SURF Object Store (S3, Ceph RGW) - recommended primary store"
+extra_flags = ["--s3-no-check-bucket", "--s3-chunk-size=64M", "--s3-upload-concurrency=4"]
+
+[remotes.research_drive]
+rclone_remote = "pyrord"
+root = "${PYRO_RD_ROOT:-pyro}"
+public = false
+restricted_ok = true
+checksum = true
+description = "SURF Research Drive (WebDAV) - fallback / exchange with collaborators"
+extra_flags = ["--tpslimit=10"]
+
+[remotes.snellius]
+rclone_remote = "pyrosnellius"
+root = "${PYRO_SNELLIUS_REMOTE_ROOT}"
+public = false
+restricted_ok = true
+checksum = true
+description = "Snellius project space over SFTP (use from laptop / Codespaces / ADA)"
+
+[remotes.gdrive]
+rclone_remote = "pyrogdrive"
+root = "${PYRO_GDRIVE_ROOT:-pyro}"
+public = false
+restricted_ok = false
+checksum = true
+description = "University Google Drive - documents, figures, small tables only"
+extra_flags = ["--tpslimit=8", "--drive-chunk-size=64M", "--max-transfer=700G", "--cutoff-mode=soft"]
+
+[remotes.commercial_s3]
+rclone_remote = "pyrocs3"
+root = "${PYRO_CS3_BUCKET:-pyro}"
+public = false
+restricted_ok = false
+checksum = true
+description = "Commercial S3 bucket (AWS / R2 / Backblaze) - optional, open products only"
+
+[remotes.public_release]
+rclone_remote = "pyropub"
+root = "${PYRO_PUBLIC_ROOT:-pyro-public}"
+public = true
+restricted_ok = false
+checksum = true
+description = "Public bucket for released, open data products"
+
+# --------------------------------------------------------------- datasets
+# path          : relative to data_root (or absolute after expansion)
+# remote_subdir : folder under the remote root (default: path)
+# include       : rclone patterns; if set, everything else is excluded
+# restricted    : unpublished / licensed; only restricted_ok remotes
+
+[datasets.events]
+path = "events"
+restricted = true
+allowed_remotes = ["surf_s3", "research_drive", "snellius"]
+include = ["*.csv", "*.parquet", "*.gpkg", "*.xlsx", "README*"]
+description = "Fire-side event tables (pyroCb events, lookalike controls); unpublished"
+
+[datasets.model_subsets]
+path = "derived/model_subsets"
+include = ["**.nc", "**.parquet", "**.json", "**.yaml"]
+description = "Boreal / event-window subsets of PPE and AeroCom 3-hourly output"
+
+[datasets.satellite]
+path = "raw/satellite"
+include = ["**.nc", "**.h5", "**.parquet", "**.json"]
+exclude = ["**/tmp/**"]
+description = "Downloaded PACE / VIIRS / ATLID / AERONET granules and extracts (re-downloadable)"
+
+[datasets.collocation]
+path = "derived/collocation"
+restricted = true
+include = ["**.parquet", "**.json"]
+description = "Model-satellite collocation parquet keyed by event id (reveals event list)"
+
+[datasets.aggregates]
+path = "derived/event_aggregates"
+restricted = true
+include = ["**.parquet", "**.csv", "**.json"]
+description = "Per-event pyroCb vs control aggregates and attribution tables"
+
+[datasets.figures]
+path = "figures"
+include = ["**.png", "**.pdf", "**.svg"]
+description = "Figures for meetings and drafts"

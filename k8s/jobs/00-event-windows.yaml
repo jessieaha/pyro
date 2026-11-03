@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pyro-event-windows
+  namespace: pyro
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 1000
+        runAsNonRoot: true
+      containers:
+        - name: event-windows
+          image: ghcr.io/jessieaha/pyro:latest
+          command: ["pyro-events", "windows",
+                    "/data/events/pcb_events_2024_boreal.csv",
+                    "-o", "/data/derived/event_windows/pcb_events_2024_boreal.parquet",
+                    "--pre-days", "1", "--post-days", "10"]
+          resources:
+            requests: {cpu: "250m", memory: "512Mi"}
+            limits: {memory: "1Gi"}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: pyro-data}

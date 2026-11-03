@@ -1,0 +1,17 @@
+.git
+.venv
+.venv-*
+.dvc/cache
+.dvc/tmp
+.dvc/config.local
+data
+logs
+config/local.env
+config/*.local.*
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+*.sif
+*.nc
+*.parquet
+uploads

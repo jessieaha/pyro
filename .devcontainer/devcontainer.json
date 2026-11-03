@@ -1,0 +1,46 @@
+{
+  "name": "pyro",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": "..",
+    "target": "dev"
+  },
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "remoteUser": "pyro",
+  "containerEnv": {
+    "PYRO_DATA_ROOT": "/workspaces/${localWorkspaceFolderBasename}/data",
+    "PYRO_SYNC_CONFIG": "/workspaces/${localWorkspaceFolderBasename}/config/sync.toml",
+    "PYRO_SYNC_ENV_FILE": "/workspaces/${localWorkspaceFolderBasename}/config/local.env",
+    "PYTHONPATH": "/workspaces/${localWorkspaceFolderBasename}/src"
+  },
+  "secrets": {
+    "EARTHDATA_TOKEN": {
+      "description": "NASA Earthdata token for earthaccess (PACE, VIIRS, OMPS-LP)."
+    },
+    "ADS_API_KEY": {
+      "description": "Copernicus Atmosphere Data Store key (CAMS), used via cdsapi."
+    },
+    "CDS_API_KEY": {
+      "description": "Copernicus Climate Data Store key (ERA5), used via cdsapi."
+    },
+    "AWS_ACCESS_KEY_ID": {
+      "description": "SURF Object Store access key (rclone remote pyros3, DVC remote surf)."
+    },
+    "AWS_SECRET_ACCESS_KEY": {
+      "description": "SURF Object Store secret key."
+    }
+  },
+  "postCreateCommand": "mkdir -p data && python -m pytest -q",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter",
+        "charliermarsh.ruff"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/venv/bin/python"
+      }
+    }
+  }
+}

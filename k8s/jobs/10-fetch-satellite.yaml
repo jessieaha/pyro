@@ -1,0 +1,37 @@
+# One pod per event (Indexed Job): JOB_COMPLETION_INDEX selects the event row.
+# The module pyro.steps.fetch_satellite is planned (docs/pipeline_plan.md, step 1c).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pyro-fetch-satellite
+  namespace: pyro
+spec:
+  completionMode: Indexed
+  completions: 1  # set to the number of rows in the windows table
+  parallelism: 8
+  backoffLimitPerIndex: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 1000
+        runAsNonRoot: true
+      containers:
+        - name: fetch
+          image: ghcr.io/jessieaha/pyro:latest
+          command: ["python", "-m", "pyro.steps.fetch_satellite",
+                    "--windows", "/data/derived/event_windows/pcb_events_2024_boreal.parquet",
+                    "--index", "$(JOB_COMPLETION_INDEX)",
+                    "--products", "spexone_rtap,viirs_db,viirs_dt,viirs_eps_aod",
+                    "--out", "/data/raw/satellite"]
+          envFrom:
+            - secretRef: {name: pyro-credentials}
+          resources:
+            requests: {cpu: "1", memory: "4Gi"}
+            limits: {memory: "8Gi"}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: pyro-data}

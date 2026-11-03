@@ -1,0 +1,25 @@
+# Apptainer definition: wraps the OCI image built from ../Dockerfile.
+# Unprivileged build on Snellius / ADA (no root, no Docker daemon):
+#   apptainer build pyro.sif containers/pyro.def
+# or directly: apptainer build pyro.sif docker://ghcr.io/jessieaha/pyro:<tag>
+# Use this file when you want HPC-specific labels or environment on top.
+
+Bootstrap: docker
+From: ghcr.io/jessieaha/pyro:latest
+
+%environment
+    export PATH=/opt/venv/bin:$PATH
+    export PYRO_SYNC_CONFIG=${PYRO_SYNC_CONFIG:-/opt/pyro/config/sync.toml}
+    # Keep HDF5 file locking off on GPFS / Lustre to avoid netCDF open errors.
+    export HDF5_USE_FILE_LOCKING=FALSE
+
+%runscript
+    exec "$@"
+
+%test
+    python -c "import pyro, xarray, netCDF4, pyarrow, earthaccess; print('pyro', pyro.__version__)"
+    rclone version | head -1
+    cdo --version 2>&1 | head -1
+
+%labels
+    org.opencontainers.image.source https://github.com/jessieaha/pyro
