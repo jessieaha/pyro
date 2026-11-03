@@ -1,0 +1,39 @@
+# One pod per event: collocate model event subsets (pulled from the object store
+# after the Snellius subsetting step) with the satellite granules of that event.
+# The module pyro.steps.collocate is planned (docs/pipeline_plan.md, step 1d).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pyro-collocate
+  namespace: pyro
+spec:
+  completionMode: Indexed
+  completions: 1  # set to the number of rows in the windows table
+  parallelism: 8
+  backoffLimitPerIndex: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 1000
+        runAsNonRoot: true
+      containers:
+        - name: collocate
+          image: ghcr.io/jessieaha/pyro:latest
+          command: ["python", "-m", "pyro.steps.collocate",
+                    "--windows", "/data/derived/event_windows/pcb_events_2024_boreal.parquet",
+                    "--index", "$(JOB_COMPLETION_INDEX)",
+                    "--model", "/data/derived/model_subsets",
+                    "--satellite", "/data/raw/satellite",
+                    "--out", "/data/derived/collocation"]
+          env:
+            - {name: OMP_NUM_THREADS, value: "2"}
+          resources:
+            requests: {cpu: "2", memory: "8Gi"}
+            limits: {memory: "16Gi"}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: pyro-data}

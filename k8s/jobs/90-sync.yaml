@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pyro-sync-collocation
+  namespace: pyro
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 1000
+        runAsNonRoot: true
+      containers:
+        - name: sync
+          image: ghcr.io/jessieaha/pyro:latest
+          command: ["pyro-sync", "push", "collocation", "-r", "surf_s3", "--apply", "--no-log"]
+          env:
+            - {name: PYRO_DATA_ROOT, value: /data}
+          envFrom:
+            - configMapRef: {name: pyro-remotes}
+            - secretRef: {name: pyro-credentials}
+          resources:
+            requests: {cpu: "500m", memory: "512Mi"}
+            limits: {memory: "1Gi"}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: pyro-data}
