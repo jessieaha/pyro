@@ -66,12 +66,16 @@ checksum = true
 description = "Snellius project space over SFTP (use from laptop / Codespaces / ADA)"
 
 [remotes.gdrive]
+# VU Google Workspace account (1 TB): private, institution-managed, so it may hold
+# restricted, event-keyed products. Never create "anyone with the link" shares.
+# Drive limits: ~750 GB/day upload, a few file creations/s -> keep parquet files
+# large (>= 50 MB) and few. The token lives in the user's rclone.conf, not here.
 rclone_remote = "pyrogdrive"
 root = "${PYRO_GDRIVE_ROOT:-pyro}"
 public = false
-restricted_ok = false
+restricted_ok = true
 checksum = true
-description = "University Google Drive - documents, figures, small tables only"
+description = "VU Google Drive (1 TB) - shared parquet store, queried via pyro-query"
 extra_flags = ["--tpslimit=8", "--drive-chunk-size=64M", "--max-transfer=700G", "--cutoff-mode=soft"]
 
 [remotes.commercial_s3]
@@ -99,7 +103,7 @@ description = "Public bucket for released, open data products"
 [datasets.events]
 path = "events"
 restricted = true
-allowed_remotes = ["surf_s3", "research_drive", "snellius"]
+allowed_remotes = ["surf_s3", "research_drive", "snellius", "gdrive"]
 include = ["*.csv", "*.parquet", "*.gpkg", "*.xlsx", "README*"]
 description = "Fire-side event tables (pyroCb events, lookalike controls); unpublished"
 
@@ -125,6 +129,26 @@ path = "derived/event_aggregates"
 restricted = true
 include = ["**.parquet", "**.csv", "**.json"]
 description = "Per-event pyroCb vs control aggregates and attribution tables"
+
+[datasets.icon_ppe]
+path = "${ICON_PPE_STORE}"
+remote_subdir = "model/icon_ham_ppe_24_25"
+include = ["values/**.parquet", "*.parquet", "*.json"]
+description = "ICON-HAM PD PPE 2024-25 monthly, all variables, parquet (pyro-icon convert)"
+
+[datasets.spexone_event_match]
+path = "derived/spexone_event_match"
+restricted = true
+include = ["**.parquet", "**.csv"]
+description = "pyroCb event x SPEXone pixel matches, super-obs and 3-hourly PPE samples"
+
+[datasets.dvc_store]
+# DVC `localstore` remote (content-addressed). Mirrors it to Drive/S3 with rclone,
+# an alternative to DVC's own gdrive remote, which needs a separate OAuth client.
+path = "${PYRO_DVC_STORE}"
+remote_subdir = "dvc"
+restricted = true
+description = "DVC object store (localstore remote) - versioned snapshots"
 
 [datasets.figures]
 path = "figures"

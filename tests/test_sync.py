@@ -178,12 +178,19 @@ def test_repo_config_is_consistent(monkeypatch, tmp_path):
     monkeypatch.setenv("PYRO_SNELLIUS_REMOTE_ROOT", "/remote/pyro_data")
     cfg = sync.load_config(REPO / "config" / "sync.toml")
     restricted = [d for d in cfg.datasets.values() if d.restricted]
-    assert {d.name for d in restricted} >= {"events", "collocation", "aggregates"}
+    assert {d.name for d in restricted} >= {
+        "events",
+        "collocation",
+        "aggregates",
+        "spexone_event_match",
+    }
     for ds in restricted:
-        for name in ("gdrive", "commercial_s3", "public_release"):
+        for name in ("commercial_s3", "public_release"):
             with pytest.raises(sync.PolicyError):
                 sync.check_policy(ds, cfg.remotes[name])
-        sync.check_policy(ds, cfg.remotes["surf_s3"])
+        for name in ("surf_s3", "gdrive"):
+            sync.check_policy(ds, cfg.remotes[name])
+    assert not cfg.remotes["gdrive"].public
     assert any("GLD360" in p for p in cfg.never_sync)
 
 
