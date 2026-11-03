@@ -1,0 +1,59 @@
+# --- local, machine-specific configuration (paths, accounts, tokens) ---
+config/local.env
+config/*.local.env
+config/*.local.toml
+.env
+.env.*
+!.env.example
+rclone.conf
+*.rclone.conf
+.netrc
+.cdsapirc
+.adsapirc
+
+# --- data never lives in git (sync with scripts/sync.sh or DVC) ---
+# Only DVC pointer files (*.dvc) and the .gitignore files DVC writes are tracked.
+/data/**
+!/data/**/
+!/data/**/*.dvc
+!/data/**/.gitignore
+/logs/
+/scratch/
+*.nc
+*.nc4
+*.h5
+*.hdf
+*.parquet
+*.zarr/
+*.gpkg
+*.sif
+
+# --- unpublished fire-side material and collaboration briefings ---
+# Event tables (pyroCb lists, lookalike controls) and lightning data are
+# restricted; keep them under $PYRO_DATA_ROOT/events, never in the repo.
+pcb_events*.csv
+pcb_events*.parquet
+*GLD360*
+*gld360*
+uploads/
+*briefing*.md
+*_reply*_for_*.md
+
+# --- python / tooling ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv-*/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+build/
+dist/
+
+# --- editors / OS ---
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
