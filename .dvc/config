@@ -1,0 +1,11 @@
+[core]
+    analytics = false
+    autostage = true
+    remote = surf
+['remote "surf"']
+    url = s3://pyro/dvc
+    endpointurl = https://objectstore.surf.nl
+['remote "researchdrive"']
+    url = webdavs://INSTANCE.data.surfsara.nl/remote.php/webdav/pyro/dvc
+['remote "snellius"']
+    url = ssh://snellius.surf.nl/PATH/TO/pyro_data/dvc
