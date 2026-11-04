@@ -15,6 +15,9 @@ Because this repository is public, locations appear here only as variables. Thei
 | `SHARED_OBS_ROOT` | Group-shared observation pool (AERONET, MODIS, MERRA-2, SPEXone gridded, ATLID L3) |
 | `ICON_PPE_SOURCE_ROOT` | ICON-HAM PD PPE 2024–25 per-member monthly netCDF, in a **temporary** shared folder (§8) |
 | `ICON_PPE_STORE` | Parquet copy of the above made by `pyro-icon convert`, on scratch (§8) |
+| `HJIA_PPE2025_ROOT` | ICON-HAM PPE2025 6-hourly output, one dmftar archive per variable, in a shared folder (§9) |
+
+Two 2024–25 PPEs are used side by side and read through one adapter (`pyro.ppe`, §9): the ECHAM-HAM PPE (`ppe_source = "ybhatti"`, §2) and the ICON-HAM PPE (`ppe_source = "hjia"`, §8–9).
 
 ## 1. Summary
 
@@ -23,7 +26,8 @@ Because this repository is public, locations appear here only as variables. Thei
 | **PD 2024–25 PPE** | ECHAM6.3-HAM2.3 (M7), nudged to ERA5 | 2024-08-01 → 2025-07-31 | **3-hourly** (`hifreq`), daily for some, monthly for the rest | Control + 250 | **Primary model data.** It only covers the Aug–Sep part of the 2024 fire season. |
 | PD PPE, ensemble-stacked | same, post-processed | same | 3-hourly / daily / monthly | 251 in one file | The fastest route to event subsets |
 | **MM PPE 2025** | ECHAM6-HAM (label `MMPPE`), AeroCom-format output | 2025-01-01 → 2025-12-31 | **6-hourly** and monthly | ~300 (+ tests) | 2025 fire season only; has 6-hourly fluxes and `ec355aer` profiles |
-| **ICON-HAM PD PPE 2024–25** | ICON-HAM (R02B04, 20480 cells) | 15 monthly means, labels 2024-06-01 → 2025-08-01 | **monthly** | 392 (IDs 0–400, 9 missing) | Context only (not 3-hourly). Source folder is temporary; converted to parquet (§8) |
+| **ICON-HAM PD PPE 2024–25** | ICON-HAM (R02B04, 20480 cells) | 15 monthly means, labels 2024-06-01 → 2025-08-01 | **monthly** | 392 (IDs 0–400, 9 missing) | Covers all 2024 events, but as monthly means: context and budgets. Source folder is temporary; converted to parquet (§8) |
+| **ICON-HAM PPE2025** | same | 2024-10-01 06Z → 2026-01-01 00Z | **6-hourly** | 308 (IDs 0–360) | No 2024 event; fits a 2025 event list (§9) |
 | PI counterparts | same models, 1850 emissions | same | same | same | Forcing baselines only |
 | Monthly extracts (AeroCom_Error) | PD 2024 PPE | 2024-08 → 2025-07 | monthly | 251 | Monthly budgets and lifetime. **Scratch purge risk** (see §6) |
 | AeroCom Phase III (local) | 7 models | 1850 / 2010 | monthly | — | **No 2024–25 and no 3-hourly data** |
@@ -82,6 +86,7 @@ The 2024 boreal list covers onsets from May to September 2024 in Alaska, Canada 
 
 - **PD PPE (3-hourly):** only the August–September events, about one fifth of the kept list, have onset and full window inside the model period. No Alaska events are covered; Alaska's 2024 events were in June.
 - **MM PPE 2025:** none.
+- **ICON-HAM PPEs:** the 6-hourly PPE2025 covers none (it starts 2024-10-01); the monthly 2024–25 PPE covers every onset if its labels mark the end of the averaging month (May 2024 → Jul 2025), or all but the three May events if they mark the start. Table in §9.
 - **SPEXone extracts:** every event in every region has SPEXone pixels within 500 km in its window, except the earliest events whose window lies entirely in May 2024 (no May extract). Details and the 3-hourly PPE sampling at those pixels: `pyro-match`, pipeline plan §1e.
 - **Public ATLID L2:** none (it starts 11 Mar 2025).
 
@@ -134,3 +139,54 @@ Event windows overlap in time, so subset the time union once, not per event. For
       pl.col("emi_oc").mean()
   )
   ```
+
+## 9. The two 2024–25 PPEs side by side
+
+Both PPEs are read through `pyro.ppe` (sources in `config/ppe_sources.toml`, `pyro-ppe list|describe`). The ICON-HAM PPE exists as two readable copies with different periods and time resolution; the owner's raw output directories (per-member `*_rad_6h_ml_*` / `*_rad_tm_ml_*` files, and the 3D fields) are **not readable** with the current group permissions, so only post-processed 2D fields are inventoried here.
+
+| | ECHAM-HAM PPE (`ybhatti`) | ICON-HAM PPE2025 (`hjia`, 6-hourly) | ICON-HAM PPE 2024–25 (`hjia`, monthly) |
+|---|---|---|---|
+| Adapter key | `ybhatti_pd_3h` | `hjia_pd2025_6h` | `hjia_pd_2024_25_monthly` (parquet), `…_nc` (source) |
+| Location variable | `PPE_STACKED_ROOT`, `PPE_SOURCE_ROOT` | `HJIA_PPE2025_ROOT` | `ICON_PPE_STORE`, `ICON_PPE_SOURCE_ROOT` |
+| Model | ECHAM6.3-HAM2.3 (M7), nudged to ERA5 | ICON-HAM (ICON-HAMMOZ GPU build) | same |
+| Members | Control + 250 (`PPE_ENS_Control`, `PPE_ENS_1…250`) | 308 IDs within 000–360 (53 missing); no member marked as control | 392 IDs within 000–400 (9 missing); no member marked as control |
+| Period | 2024-08-01 00Z → 2025-07-31 21Z | 2024-10-01 06Z → 2026-01-01 00Z | 15 monthly means, labels 2024-06-01 → 2025-08-01 |
+| Time step / kind | 3-hourly, instantaneous | 6-hourly, instantaneous | monthly mean (label probably = end of month) |
+| Time encoding | `days since 2024-4-1` (CF) | `day as %Y%m%d.%f` | `day as %Y%m%d.%f` |
+| Grid | T63 Gaussian 96 × 192 (≈1.9°), lon 0…358.125 | R02B04 icosahedral, 20480 cells (≈160 km), `clat`/`clon` in radians | same |
+| Vertical | 47 hybrid levels; `TAU_3D_355nm` 3-hourly | 2D fields only in the readable copy | 2D only |
+| Layout | Per member: one 26 GB `*_hifreq.nc` (all 3-hourly fields) + per-variable extracts; stacked `(ensemble, time, lat, lon)` per variable, ≈54 GB | One dmftar archive per variable (`<VAR>.dmftar/0000/<VAR>.dmftar.tar` + `.idx` listing + blake2b `.chksum`), holding `<VAR>/ens_NNN_PD_<VAR>.nc` (time × ncells, netCDF4/HDF5), ≈82 GB per variable, ≈1 TB total | One directory per variable, `ens_NNN_PD_<VAR>.nc`; 22 GB; parquet copy 8.2 GB |
+| AOD 550 | `TAU_2D_550nm` | `TAU_2D_550nm` (+ `TAU_2D_440nm`) | `TAU_2D_550nm` |
+| AAOD / SSA | `ABS_2D_550nm`; stacked `SSA_2D_550nm` | `ABS_2D_550nm`, `ABS_2D_440nm` | `ABS_2D_550nm` |
+| Ångström | `ANG_440nm_670nm`, `ANG_550nm_865nm` | same names | same names |
+| Component AOD | daily only (`TAU_COMP_*_550nm_rad`) | `TAU_COMP_{BC,OC,SO4,SS,DU,WAT}_550nm` | same |
+| Extinction profile | `TAU_3D_355nm` (layer AOD, 47 levels) | not available | not available |
+| Burdens | `burden_{BC,OC,SO4,SS,DU,WAT}` 3-hourly | not available | not available |
+| Emissions | monthly `emi_*` incl. `_tfire` sectors | not available | `emi_{bc,oc,so2,so4,dms,du,ss}` |
+| Deposition | none | not available | dry only: `ddep_{bc,oc,so2,so4,du,ss}` |
+| Fire injection | GFAS daily via HAM `fire` type, scaled by `SCALE_EMI_BB_*`; standard low-level profile, no pyroCb/UTLS injection | unknown (to confirm with the provider) | unknown |
+| Units | AOD, AAOD, AE: 1; burdens kg m⁻²; fluxes kg m⁻² s⁻¹ | 1 | 1; fluxes kg m⁻² s⁻¹ |
+
+The ICON per-member raw output (not readable) also has mode AODs (`TAU_2D_MODE_*`) according to the one readable PI sample. A further stacked copy of the monthly ICON fields (383 members, AOD/components/AE/SSA, `(ens, time, ncells)`) exists in a shared folder; it is not used because the 392-member copy supersedes it.
+
+### Format differences the adapter removes
+
+| Aspect | ECHAM (`ybhatti`) | ICON (`hjia`) | Common schema |
+|---|---|---|---|
+| Variable names | HAM names, upper-case burdens (`burden_BC`) | HAM names, lower-case fluxes (`emi_bc`, `ddep_bc`) | AeroCom-style canonical names: `od550aer`, `abs550aer`, `ssa550aer`, `ae440_670`, `ae550_865`, `od550bc…`, `load*`, `emi*`, `dry*`, `pr` (`pyro.ppe.VARIABLES`) |
+| SSA | stored (stacked) or 1 − ABS/TAU | 1 − ABS/TAU | always derived as 1 − `abs550aer`/`od550aer` (identical to the stored ECHAM SSA) |
+| Members | ensemble index 0 = Control, i = `PPE_ENS_i` | `ens_NNN` IDs with gaps | `member` (int32) + `is_control` |
+| Time | CF days since 2024-04-01, instants | `%Y%m%d.%f` instants or month-end-stamped means | `model_time` (UTC; mean interval midpoint for means), `t_idx`, `dt_hours` = observation − model time; `t_idx = −1` and nulls outside the period |
+| Horizontal | (lat, lon) Gaussian, lon 0–360 | cell index, radians | `cell` (int64; `j·nlon + i` for T63), `model_lat`/`model_lon` in degrees, lon in [−180, 180) |
+| Storage | contiguous netCDF, stacked | dmftar (read in place: tar member offsets from the `.idx`, then HDF5 over a file slice; nothing is unpacked), plain netCDF, or parquet | — |
+| Provenance | — | — | `ppe_source` (`ybhatti`/`hjia`), `dataset` (adapter key), `model`, `resolution` |
+
+### Coverage of the 2024 boreal event list
+
+Onset inside the period, all regions (exact counts in the restricted `pyro-events coverage` / `pyro-match` outputs):
+
+| Dataset | Coverage | Match with SPEXone (`pyro-match --model`) |
+|---|---|---|
+| ECHAM 3-hourly (`ybhatti_pd_3h`) | the Aug–Sep onsets only (≈ one fifth: Canada and Northern Asia, no Alaska) | super-obs for about one fifth of the events; the primary comparison |
+| ICON 6-hourly (`hjia_pd2025_6h`) | none | none |
+| ICON monthly (`hjia_pd_2024_25_monthly`) | all onsets with end-of-month labels; all but the May onsets with start-of-month labels | monthly-mean super-obs for nearly every event (context only, `--allow-coarse`) |

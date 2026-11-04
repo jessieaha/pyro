@@ -130,17 +130,21 @@ restricted = true
 include = ["**.parquet", "**.csv", "**.json"]
 description = "Per-event pyroCb vs control aggregates and attribution tables"
 
+# PPE sources are read in place through pyro.ppe (config/ppe_sources.toml). Only the
+# ICON-HAM monthly store is synced: its netCDF source folder is temporary. The ECHAM-HAM
+# stacked files (~54 GB per variable) and the ICON-HAM PPE2025 dmftar archives (~1 TB)
+# stay on Snellius; event subsets of both go out through spexone_event_match.
 [datasets.icon_ppe]
 path = "${ICON_PPE_STORE}"
 remote_subdir = "model/icon_ham_ppe_24_25"
 include = ["values/**.parquet", "*.parquet", "*.json"]
-description = "ICON-HAM PD PPE 2024-25 monthly, all variables, parquet (pyro-icon convert)"
+description = "ICON-HAM PD PPE 2024-25 (ppe_source hjia) monthly, all variables, parquet (pyro-icon convert)"
 
 [datasets.spexone_event_match]
 path = "derived/spexone_event_match"
 restricted = true
 include = ["**.parquet", "**.csv"]
-description = "pyroCb event x SPEXone pixel matches, super-obs and 3-hourly PPE samples"
+description = "pyroCb event x SPEXone pixel matches, super-obs and PPE samples per source (superobs_<key>, model_<key>; common pyro.ppe schema)"
 
 [datasets.dvc_store]
 # DVC `localstore` remote (content-addressed). Mirrors it to Drive/S3 with rclone,
