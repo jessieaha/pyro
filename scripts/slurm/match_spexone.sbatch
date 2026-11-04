@@ -1,7 +1,8 @@
 #!/bin/bash
-# Match all events with SPEXone and sample the 3-hourly PPE (all members) there.
+# Match all events with SPEXone and sample the PPE (all members) there.
 #   sbatch --account="$PYRO_SLURM_ACCOUNT" scripts/slurm/match_spexone.sbatch \
-#          "$PYRO_DATA_ROOT/events/<table>.csv"
+#          "$PYRO_DATA_ROOT/events/<table>.csv" [--ppe KEY ... [--allow-coarse]]
+# Default source: ybhatti_pd_3h (config/ppe_sources.toml).
 #SBATCH --job-name=pyro-match
 #SBATCH --partition=rome
 #SBATCH --time=02:00:00

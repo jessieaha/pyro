@@ -4,9 +4,10 @@
 SPEXone RemoTAP L2 pixels (land + ocean) inside the event window and within
 ``--max-km`` of the matched fire position, and summarise per event.
 
-``model``: average the matched pixels into super-obs on the ECHAM T63 grid at the
-nearest 3-hourly step, and sample every PPE member from the ensemble-stacked
-3-hourly (``*_hifreq_PPE.nc``) files. Only 3-hourly model output is used.
+``model``: for each PPE source (``--ppe``, read through ``pyro.ppe``) average the
+matched pixels into super-obs per (event, model time step, model cell) and sample
+every member there, in the common PPE schema. Only 3-hourly sources are used
+unless ``--allow-coarse`` is given.
 
 Outputs contain event identifiers and are restricted data (written under
 ``$PYRO_DATA_ROOT/derived``, never committed).
@@ -21,9 +22,9 @@ import re
 import sys
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 
+from pyro import ppe
 from pyro.events import PERIODS, add_windows, load_events
 
 EARTH_RADIUS_KM = 6371.0
@@ -45,14 +46,9 @@ SPEX_COLUMNS = (
 )
 SPEX_RE = re.compile(r"PACE_SPEXONE_L2_AER_RTAP(LAND|OCEAN)_(\d{4})_(\d{2})_v([\d.]+)\.parquet$")
 
-# Stacked 3-hourly PPE files: file stem -> (netCDF variable, output column).
-MODEL_FIELDS = {
-    "TAU_2D_550nm_hifreq_PPE": ("TAU_2D_550nm", "m_aod550"),
-    "ABS_2D_550nm_hifreq_PPE": ("ABS_2D_550nm", "m_aaod550"),
-    "SSA_2D_550nm_hifreq_PPE": ("__xarray_dataarray_variable__", "m_ssa550"),
-    "ANG_440nm_670nm_hifreq_PPE": ("ANG_440nm_670nm", "m_ae440_670"),
-}
-MODEL_STEP_DAYS = 0.125
+# Canonical PPE variables (pyro.ppe) sampled at the super-obs.
+MODEL_VARIABLES = ["od550aer", "abs550aer", "ssa550aer", "ae440_670", "ae550_865"]
+DEFAULT_PPE = ["ybhatti_pd_3h"]
 
 
 def spexone_files(root: Path) -> pl.DataFrame:
@@ -206,41 +202,24 @@ def summarize(events: pl.DataFrame, matches: pl.DataFrame) -> pl.DataFrame:
 # --------------------------------------------------------------------------- model
 
 
-def _model_axes(path: Path) -> dict:
-    import netCDF4
-
-    with netCDF4.Dataset(path) as ds:
-        units = ds["time"].units
-        m = re.match(r"days since (\d{4}-\d{2}-\d{2})", units)
-        if not m:
-            raise ValueError(f"unexpected time units {units!r} in {path}")
-        return {
-            "time": np.asarray(ds["time"][:], dtype=np.float64),
-            "t0": m.group(1),
-            "lat": np.asarray(ds["lat"][:], dtype=np.float64),
-            "lon": np.asarray(ds["lon"][:], dtype=np.float64),
-            "ensemble": np.asarray(ds["ensemble"][:]),
-        }
-
-
-def superobs(matches: pl.DataFrame, axes: dict, max_km: float) -> pl.DataFrame:
-    """Average pixels per (event, 3-hourly step, T63 cell)."""
-    lat, lon, tm = axes["lat"], axes["lon"], axes["time"]
-    epoch = pl.lit(axes["t0"]).str.to_datetime(time_zone="UTC")
-    m = matches.filter(pl.col("dist_km") <= max_km).with_columns(
-        ((pl.col("date") - epoch).dt.total_seconds() / 86400.0).alias("t_days")
+def superobs(matches: pl.DataFrame, src: ppe.Source, max_km: float) -> pl.DataFrame:
+    """Average pixels per (event, model time step, model cell) of ``src``."""
+    m = matches.filter(pl.col("dist_km") <= max_km)
+    if m.is_empty():
+        return pl.DataFrame()
+    pts = m.select(
+        pl.int_range(pl.len(), dtype=pl.Int64).alias("point_id"),
+        pl.col("date").alias("time"),
+        "lat",
+        "lon",
     )
-    t_idx = np.rint((m["t_days"].to_numpy() - tm[0]) / MODEL_STEP_DAYS).astype(np.int64)
-    dlon = float(lon[1] - lon[0])
-    i_lon = np.rint(((m["lon"].to_numpy() - lon[0]) % 360.0) / dlon).astype(np.int64) % lon.size
-    i_lat = np.abs(m["lat"].to_numpy()[:, None] - lat[None, :]).argmin(axis=1)
-    m = m.with_columns(
-        pl.Series("t_idx", t_idx), pl.Series("lat_idx", i_lat), pl.Series("lon_idx", i_lon)
-    ).filter(pl.col("t_idx").is_between(0, tm.size - 1))
+    loc = ppe.locate(src, pts).drop("point_id", "dt_hours")
+    m = pl.concat([m, loc], how="horizontal").filter(pl.col("t_idx") >= 0)
     ae = -(pl.col("aot_440nm") / pl.col("aot_670nm")).log() / math.log(440 / 670)
     return (
-        m.group_by("pcb_id", "region", "kept", "t_idx", "lat_idx", "lon_idx")
+        m.group_by("pcb_id", "region", "kept", "t_idx", "cell")
         .agg(
+            pl.col("model_time", "model_lat", "model_lon").first(),
             pl.len().alias("n_pix"),
             pl.col("date").mean().alias("obs_time"),
             pl.col("dt_hours").mean(),
@@ -254,45 +233,42 @@ def superobs(matches: pl.DataFrame, axes: dict, max_km: float) -> pl.DataFrame:
         )
         .with_columns(
             (pl.col("o_aod550") * (1 - pl.col("o_ssa550"))).alias("o_aaod550"),
-            pl.col("t_idx")
-            .map_elements(lambda i: float(tm[i]), return_dtype=pl.Float64)
-            .alias("model_time_days"),
+            pl.lit(src.key).alias("dataset"),
+            pl.lit(src.ppe_source).alias("ppe_source"),
+            pl.lit(src.resolution).alias("resolution"),
         )
-        .sort("pcb_id", "t_idx", "lat_idx", "lon_idx")
+        .sort("pcb_id", "t_idx", "cell")
     )
 
 
-def sample_model(so: pl.DataFrame, stacked_root: Path, axes: dict) -> pl.DataFrame:
-    """Sample each stacked 3-hourly field for every member at the super-obs points."""
-    import netCDF4
-
+def sample_model(
+    so: pl.DataFrame, src: ppe.Source, variables: list[str] | None = None
+) -> pl.DataFrame:
+    """All members of ``src`` at the super-obs (common PPE schema plus ``pcb_id``)."""
     if so.is_empty():
         return pl.DataFrame()
-    t = so["t_idx"].to_numpy()
-    j = so["lat_idx"].to_numpy()
-    i = so["lon_idx"].to_numpy()
-    t0, t1 = int(t.min()), int(t.max()) + 1
-    n_ens = axes["ensemble"].size
-    cols: dict[str, np.ndarray] = {}
-    for stem, (var, col) in MODEL_FIELDS.items():
-        path = stacked_root / f"{stem}.nc"
-        if not path.exists():
-            print(f"missing {path}, skipping {col}", file=sys.stderr)
-            continue
-        vals = np.empty((n_ens, len(so)), dtype=np.float32)
-        with netCDF4.Dataset(path) as ds:
-            v = ds[var]
-            v.set_auto_mask(False)
-            for e in range(n_ens):
-                slab = v[e, t0:t1]
-                vals[e] = slab[t - t0, j, i]
-        cols[col] = vals.reshape(-1)
-        print(f"sampled {col}", file=sys.stderr, flush=True)
-    rep = so.select("pcb_id", "t_idx", "lat_idx", "lon_idx")
-    out = pl.concat([rep] * n_ens, how="vertical").with_columns(
-        pl.Series("member", np.repeat(axes["ensemble"].astype(np.int32), len(so)))
+    want = [
+        v
+        for v in variables or MODEL_VARIABLES
+        if set(ppe.DERIVED.get(v, (v,))) <= set(src.available())
+    ]
+    pts = so.select(
+        pl.int_range(pl.len(), dtype=pl.Int64).alias("point_id"),
+        pl.col("obs_time").alias("time"),
+        pl.col("model_lat").alias("lat"),
+        pl.col("model_lon").alias("lon"),
     )
-    return out.with_columns(pl.Series(k, v) for k, v in cols.items())
+    df = ppe.sample(src, pts, want)
+    keys = so.select(
+        pl.int_range(pl.len(), dtype=pl.Int64).alias("point_id"), "pcb_id", "t_idx", "cell"
+    )
+    check = df.select("point_id", "t_idx", "cell").unique().join(keys, on="point_id")
+    if (
+        not (check["t_idx"] == check["t_idx_right"]).all()
+        or not (check["cell"] == check["cell_right"]).all()
+    ):
+        raise RuntimeError("super-obs moved to another model step or cell when resampled")
+    return df.join(keys.select("point_id", "pcb_id"), on="point_id").select("pcb_id", *df.columns)
 
 
 # --------------------------------------------------------------------------- CLI
@@ -312,9 +288,21 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-km", type=float, default=float(max(RADII_KM)))
     p.add_argument("--spexone-root", type=Path, default=os.environ.get("SPEXONE_EXTRACT_ROOT"))
     p.add_argument("--out", type=Path, default=None)
-    p.add_argument("--model", action="store_true", help="also sample the 3-hourly PPE")
+    p.add_argument("--model", action="store_true", help="also sample the PPE (see --ppe)")
     p.add_argument("--model-km", type=float, default=500.0)
-    p.add_argument("--stacked-root", type=Path, default=os.environ.get("PPE_STACKED_ROOT"))
+    p.add_argument(
+        "--ppe",
+        action="append",
+        default=None,
+        help=f"PPE source key from config/ppe_sources.toml (repeatable; default {DEFAULT_PPE})",
+    )
+    p.add_argument("--ppe-config", type=Path, default=None)
+    p.add_argument(
+        "--allow-coarse",
+        action="store_true",
+        help="also match sources coarser than 3-hourly (6-hourly, monthly); results are "
+        "flagged by the 'resolution' column",
+    )
     a = p.parse_args(argv)
     if a.spexone_root is None:
         p.error("--spexone-root or SPEXONE_EXTRACT_ROOT is required")
@@ -350,19 +338,22 @@ def main(argv: list[str] | None = None) -> int:
         print(by_region)
 
     if a.model:
-        if a.stacked_root is None:
-            p.error("--stacked-root or PPE_STACKED_ROOT is required with --model")
-        axes = _model_axes(a.stacked_root / "TAU_2D_550nm_hifreq_PPE.nc")
-        so = superobs(matches, axes, a.model_km) if not matches.is_empty() else pl.DataFrame()
-        print(
-            f"{len(so)} super-obs within {a.model_km:.0f} km in the 3-hourly period",
-            file=sys.stderr,
-        )
-        if not so.is_empty():
-            so.write_parquet(out / "superobs.parquet", compression="zstd")
-            sample_model(so, a.stacked_root, axes).write_parquet(
-                out / "model_3h_members.parquet", compression="zstd"
-            )
+        cfg = ppe.load_config(a.ppe_config)
+        for key in a.ppe or DEFAULT_PPE:
+            if key not in cfg:
+                p.error(f"unknown PPE source {key!r}; configured: {sorted(cfg)}")
+            if cfg[key].get("resolution") != "3h" and not a.allow_coarse:
+                p.error(
+                    f"{key} is {cfg[key].get('resolution')}; satellite matching uses "
+                    "3-hourly output only (override with --allow-coarse)"
+                )
+            src = ppe.open_source(key, a.ppe_config)
+            so = superobs(matches, src, a.model_km) if not matches.is_empty() else pl.DataFrame()
+            print(f"{key}: {len(so)} super-obs within {a.model_km:.0f} km", file=sys.stderr)
+            if so.is_empty():
+                continue
+            so.write_parquet(out / f"superobs_{key}.parquet", compression="zstd")
+            sample_model(so, src).write_parquet(out / f"model_{key}.parquet", compression="zstd")
     return 0
 
 
