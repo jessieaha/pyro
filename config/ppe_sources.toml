@@ -1,0 +1,48 @@
+# PPE sources read by pyro.ppe (`pyro-ppe list|describe`, `pyro-match --ppe KEY`).
+# Paths come from environment variables set in config/local.env (gitignored);
+# see docs/data_inventory.md for what each dataset contains.
+#
+# time_kind = "instant" (snapshots) or "interval" (means; time_label marks the
+# "end" or "start" of the averaging interval, time_step its length).
+
+[sources.ybhatti_pd_3h]
+reader = "echam_stacked"
+ppe_source = "ybhatti"
+model = "ECHAM6.3-HAM2.3"
+resolution = "3h"
+root = "${PPE_STACKED_ROOT}"
+member_root = "${PPE_SOURCE_ROOT}/PPE_Experiments"
+time_kind = "instant"
+description = "PD PPE, control + 250 members, 3-hourly, Aug 2024 - Jul 2025, T63"
+
+[sources.hjia_pd2025_6h]
+reader = "icon_per_variable"
+ppe_source = "hjia"
+model = "ICON-HAM"
+resolution = "6h"
+root = "${HJIA_PPE2025_ROOT}"
+archive = true
+time_kind = "instant"
+description = "PPE2025 PD, ~308 members, 6-hourly, Oct 2024 - Dec 2025, R02B04 (dmftar)"
+
+[sources.hjia_pd_2024_25_monthly]
+reader = "icon_parquet"
+ppe_source = "hjia"
+model = "ICON-HAM"
+resolution = "1mon"
+root = "${ICON_PPE_STORE}"
+time_kind = "interval"
+time_label = "end"
+time_step = "1mon"
+description = "PD PPE 2024-25, 392 members, monthly means (parquet store), R02B04"
+
+[sources.hjia_pd_2024_25_monthly_nc]
+reader = "icon_per_variable"
+ppe_source = "hjia"
+model = "ICON-HAM"
+resolution = "1mon"
+root = "${ICON_PPE_SOURCE_ROOT}"
+time_kind = "interval"
+time_label = "end"
+time_step = "1mon"
+description = "Same as hjia_pd_2024_25_monthly, read from the per-member netCDF source"
