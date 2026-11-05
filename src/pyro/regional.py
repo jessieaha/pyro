@@ -454,7 +454,8 @@ def run(
         print(f"{key}: {len(so)} regional super-obs", file=sys.stderr)
         if so.is_empty():
             continue
-        model = match.sample_model(so, src, keys=KEYS)
+        variables = [mcol for _, mcol, _ in compare.VARIABLES.values()]
+        model = match.sample_model(so, src, variables, keys=KEYS)
         so.write_parquet(out / f"superobs_{key}.parquet", compression="zstd")
         model.write_parquet(out / f"model_{key}.parquet", compression="zstd")
         st, mem = evaluate(so, model, key)

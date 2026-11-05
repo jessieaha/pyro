@@ -23,7 +23,7 @@ Two kernels work, in Cursor / VS Code ("Select Kernel") or JupyterLab:
 - **Project venv** (`.venv`, kernel "pyro"): `uv sync --all-extras` installs `ipykernel`. On Snellius `uv` is not a module; install it once with `python3 -m pip install --user uv` (puts it in `~/.local/bin`).
 - **Container** (kernel "pyro (apptainer)"): `scripts/apptainer_kernel.sh install $PYRO_SIF` writes a kernelspec to `~/.local/share/jupyter/kernels/pyro-apptainer` that starts `ipykernel` inside the image, binding `/gpfs`, `/projects` and `/scratch-shared` (`PYRO_APPTAINER_BIND`). It uses `--cleanenv` on purpose: the editor's environment carries host modules that break the container's libraries. Notebooks read paths from `config/local.env` themselves. The image needs `ipykernel`, which is in images built from `main` after this change; `scripts/apptainer_build.sh` refreshes the `.sif`.
 
-Run notebooks on a compute node (`salloc` / Open OnDemand), not a login node. Commit notebooks without outputs (`tests/test_notebooks.py` checks): their outputs contain restricted, event-keyed data.
+Run notebooks on a compute node (`salloc` / Open OnDemand), not a login node. Commit notebooks without outputs (`tests/test_notebooks.py` checks the staged version): their outputs contain restricted, event-keyed data. Enable the strip filter once per clone, `git config filter.nbstrip.clean "python3 scripts/nbstrip.py"` (`.gitattributes`); `git add` then stores the notebook without outputs while your working copy keeps them.
 
 ### Updating the lock
 

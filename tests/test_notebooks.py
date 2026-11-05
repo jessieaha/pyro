@@ -2,6 +2,7 @@
 event-keyed data in this public repository) and must run on synthetic inputs."""
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -10,9 +11,19 @@ REPO = Path(__file__).resolve().parents[1]
 NOTEBOOKS = sorted((REPO / "notebooks").glob("*.ipynb"))
 
 
+def _staged(nb: Path) -> str:
+    """The version git would commit (index), else the file; the nbstrip filter
+    lets the working copy keep its outputs."""
+    rel = nb.relative_to(REPO).as_posix()
+    out = subprocess.run(
+        ["git", "show", f":{rel}"], cwd=REPO, capture_output=True, text=True, check=False
+    )
+    return out.stdout if out.returncode == 0 else nb.read_text()
+
+
 @pytest.mark.parametrize("nb", NOTEBOOKS, ids=lambda p: p.name)
 def test_notebook_has_no_outputs(nb):
-    cells = json.loads(nb.read_text())["cells"]
+    cells = json.loads(_staged(nb))["cells"]
     for c in cells:
         if c["cell_type"] == "code":
             assert c.get("outputs") == [], f"{nb.name}: clear outputs before committing"
