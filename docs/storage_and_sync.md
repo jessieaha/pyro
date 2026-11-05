@@ -41,6 +41,11 @@ dCache at SURF (WebDAV/xrootd with macaroons, tape-backed) suits grid-scale arch
 
 Action for Jessie: link Drive once with `scripts/gdrive_setup.sh` (interactive; Google login in a laptop browser). The token stays in `~/.config/rclone/rclone.conf` on Snellius, not in the repo.
 
+- The script prints one `rclone authorize "drive" "<blob>"` command to run on the laptop (rclone installed there) and reads the JSON token it returns, hidden; `--token-file FILE` reads it from a file instead. `scripts/gdrive_setup.sh status` says `linked`, `no_token` or `missing`.
+- `empty token found - please run "rclone config reconnect pyrogdrive:"` means the remote was saved without a token. Recent rclone versions do that when `rclone config create` runs without a terminal; the earlier version of the script did exactly this. Rerunning `scripts/gdrive_setup.sh` repairs it. `pyro-sync` prints the same hint when a Drive transfer fails.
+- rclone's shared Google OAuth client is being retired during 2026, and VU may block it. Create your own Desktop-app OAuth client (Google Cloud console, Drive API enabled, consent screen "Internal") and export `RCLONE_DRIVE_CLIENT_ID` / `RCLONE_DRIVE_CLIENT_SECRET` before running the script; the printed laptop command then uses the same client.
+- Scope `drive.file` means rclone only sees what it created itself. A `pyro` folder made by hand in the Drive web UI stays invisible; let the script's `check` step create it.
+
 ### Data flow
 
 ```

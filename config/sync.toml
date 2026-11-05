@@ -76,6 +76,7 @@ public = false
 restricted_ok = true
 checksum = true
 description = "VU Google Drive (1 TB) - shared parquet store, queried via pyro-query"
+setup = "scripts/gdrive_setup.sh  (links Drive or repairs a remote without OAuth token)"
 extra_flags = ["--tpslimit=8", "--drive-chunk-size=64M", "--max-transfer=700G", "--cutoff-mode=soft"]
 
 [remotes.commercial_s3]
@@ -145,6 +146,18 @@ path = "derived/spexone_event_match"
 restricted = true
 include = ["**.parquet", "**.csv"]
 description = "pyroCb event x SPEXone pixel matches, super-obs and PPE samples per source (superobs_<key>, model_<key>; common pyro.ppe schema)"
+
+[datasets.event_comparison]
+path = "derived/event_comparison"
+restricted = true
+include = ["**.parquet", "**.csv", "figures/**.png"]
+description = "Per-event SPEXone vs PPE ensemble comparison: table, metrics, coverage, figures (pyro-compare)"
+
+[datasets.regional_stats]
+path = "derived/regional_stats"
+restricted = true
+include = ["**.parquet", "**.csv", "figures/**.png"]
+description = "Regional AeroVal statistics, all vs background vs pyroCb scenes, per PPE member (pyro-regional)"
 
 [datasets.dvc_store]
 # DVC `localstore` remote (content-addressed). Mirrors it to Drive/S3 with rclone,

@@ -54,6 +54,7 @@ class Remote:
     checksum: bool = True
     description: str = ""
     extra_flags: tuple[str, ...] = ()
+    setup: str = ""
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,7 @@ def load_config(path: str | os.PathLike, environ: Mapping[str, str] | None = Non
             checksum=bool(r.get("checksum", True)),
             description=r.get("description", ""),
             extra_flags=_tuple(r.get("extra_flags")),
+            setup=r.get("setup", ""),
         )
     datasets = {}
     for name, d in raw.get("datasets", {}).items():
@@ -377,16 +379,22 @@ def _cmd_transfer(cfg: Config, args, argv: Sequence[str]) -> int:
     if not shutil.which(cmd[0]):
         raise SyncError(f"rclone not found ({cmd[0]}); install it or set PYRO_SYNC_RCLONE")
     if not remote_configured(rm, cfg.environ):
-        raise SyncError(
-            f"rclone remote '{rm.rclone_remote}:' is not configured; export "
-            f"RCLONE_CONFIG_{rm.rclone_remote.upper()}_TYPE and friends "
+        how = rm.setup or (
+            f"export RCLONE_CONFIG_{rm.rclone_remote.upper()}_TYPE and friends "
             "(see config/remotes.env.example)"
         )
+        raise SyncError(f"rclone remote '{rm.rclone_remote}:' is not configured; {how}")
     mode = "check" if args.command == "check" else ("APPLY" if apply else "dry-run")
     print(f"[{mode}] {shlex.join(cmd)}", flush=True)
     rc = subprocess.run(cmd, env=dict(cfg.environ), check=False).returncode
     if log_file is not None:
         print(f"log: {log_file}")
+    if rc != 0 and rm.setup:
+        print(
+            f"rclone exited with {rc}. If it reported a login or token problem "
+            f"for '{rm.rclone_remote}:', run: {rm.setup}",
+            file=sys.stderr,
+        )
     if args.command != "check" and not apply and rc == 0:
         print("dry run only; re-run with --apply to transfer")
     return rc

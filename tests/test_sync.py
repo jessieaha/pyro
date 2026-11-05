@@ -173,6 +173,25 @@ def test_slurm_script_has_no_secrets(env, capsys, monkeypatch):
     assert "do-not-leak-me" not in out
 
 
+def test_setup_hint_on_missing_remote_and_failure(env, capsys, monkeypatch):
+    cfg_path = env["config"]
+    cfg_path.write_text(
+        CONFIG
+        + '\n[remotes.drive]\nrclone_remote = "pyronodrive"\nroot = "x"\n'
+        + 'setup = "scripts/gdrive_setup.sh"\n'
+    )
+    (env["data"] / "derived").mkdir()
+    base = ["--config", str(cfg_path), "--env-file", "/nonexistent", "push", "derived"]
+    monkeypatch.setenv("PYRO_SYNC_RCLONE", "true")
+    assert sync.main([*base, "-r", "drive"]) != 0
+    assert "scripts/gdrive_setup.sh" in capsys.readouterr().err
+
+    monkeypatch.setenv("PYRO_SYNC_RCLONE", "false")
+    monkeypatch.setenv("RCLONE_CONFIG_PYRONODRIVE_TYPE", "drive")
+    assert sync.main([*base, "-r", "drive"]) == 1
+    assert "run: scripts/gdrive_setup.sh" in capsys.readouterr().err
+
+
 def test_repo_config_is_consistent(monkeypatch, tmp_path):
     monkeypatch.setenv("PYRO_DATA_ROOT", str(tmp_path))
     monkeypatch.setenv("PYRO_SNELLIUS_REMOTE_ROOT", "/remote/pyro_data")
@@ -191,6 +210,7 @@ def test_repo_config_is_consistent(monkeypatch, tmp_path):
         for name in ("surf_s3", "gdrive"):
             sync.check_policy(ds, cfg.remotes[name])
     assert not cfg.remotes["gdrive"].public
+    assert "gdrive_setup.sh" in cfg.remotes["gdrive"].setup
     assert any("GLD360" in p for p in cfg.never_sync)
 
 
