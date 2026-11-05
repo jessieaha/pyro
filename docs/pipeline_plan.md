@@ -150,8 +150,10 @@ From Python, one call per source with any limit:
 
 ```python
 from pyro import match, ppe
-so, model = match.match_event_model(events, spex, ppe.open_source("ybhatti_pd_3h"),
-                                    radius_km=500, pre_hours=24, max_hours_after=72)
+
+so, model = match.match_event_model(
+    events, spex, ppe.open_source("ybhatti_pd_3h"), radius_km=500, pre_hours=24, max_hours_after=72
+)
 ```
 
 - Every event in the table is processed (all regions; `kept` is kept as a column). Window: onset − `--pre-hours` (24) to onset + `--max-hours-after` (240). Pixels: SPEXone RemoTAP land + ocean extracts within 1000 km of `lon_c`/`lat_c` (great-circle distance, dateline-safe), i.e. wherever the swath passed near the fire in the window.
