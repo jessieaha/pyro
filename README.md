@@ -36,13 +36,18 @@ flowchart TD
   PPE --> ADAPT
   ICONPQ --> ADAPT
   ICON6 -->|"read in place"| ADAPT
-  ADAPT -->|"3-hourly, all members"| MATCH
-  ADAPT -.->|"6-hourly / monthly, --allow-coarse"| MATCH
+  ADAPT -->|"ybhatti 3-hourly only, all members<br/>onset -pre_hours to +max_hours_after"| MATCH
   MATCH --> COL
   MATCH --> CMP["Per-event comparison<br/>pyro-compare, notebook: obs vs ensemble"]
+  VIIRS --> VG["VIIRS gridding, pyro-viirs<br/>fetch, extract, super-obs on the 3-hourly grid"]
+  EV --> VG
+  ADAPT -->|"3-hourly"| VG
+  VG --> CMP
+  ADAPT -->|"3-hourly fields"| ANIM["Plume animation, pyro-animate<br/>AOD and SSA, 1 s per model step"]
+  EV --> ANIM
   SPEX --> REG["Regional statistics, AeroVal metrics<br/>pyro-regional: all vs background vs pyroCb"]
   EV --> REG
-  ADAPT -->|"all members"| REG
+  ADAPT -->|"3-hourly and monthly, all members"| REG
   CMP --> AGG
   REG --> AGG
   ICON --> ICONPQ[("ICON-HAM parquet store<br/>pyro-icon, all variables")]
@@ -121,6 +126,9 @@ The image holds Python, the libraries and tools (`cdo`, `rclone`). It does not h
 | `src/pyro/ppe.py`, `config/ppe_sources.toml` | `pyro-ppe`: one reader/adapter for both PPEs (ybhatti ECHAM-HAM, hjia ICON-HAM) with a common schema |
 | `src/pyro/compare.py`, `notebooks/event_comparison.ipynb` | `pyro-compare`: per-event SPEXone super-obs vs ensemble median / 5–95 % / control, metrics and figures |
 | `src/pyro/regional.py`, `config/regions.toml` | `pyro-regional`: AeroVal statistics per region for the regional average, background and pyroCb-affected scenes, per member |
+| `src/pyro/gridding.py` | Pixel gridding (regular bins or the PPE grid) and cos(lat)-weighted regional means, ported from AeroCom_Error |
+| `src/pyro/viirs.py` | `pyro-viirs`: VIIRS Deep Blue / Dark Target L2 download, pixel extracts, event super-obs |
+| `src/pyro/animate.py` | `pyro-animate`: AOD and SSA plume animation around an event, borders, 1 s per model step |
 | `src/pyro/icon_ppe.py` | `pyro-icon`: ICON-HAM PPE netCDF → partitioned parquet store, with verification |
 | `src/pyro/store.py` | `pyro-query`: polars queries on local parquet or in place on Drive via `rclone serve s3` |
 | `scripts/gdrive_setup.sh` | Link the VU Google Drive to rclone, or repair a remote saved without token (token stays outside the repo) |
@@ -144,6 +152,7 @@ uv run pyro-ppe list                      # configured PPE sources
 uv run pyro-match "$PYRO_DATA_ROOT/events/<event_table>.csv"
 uv run pyro-compare                       # per-event figures from the pyro-match output
 uv run pyro-regional "$PYRO_DATA_ROOT/events/<event_table>.csv"   # regional statistics
+uv run pyro-animate <pcb_id>              # plume animation (AOD, SSA), +-1000 km, 24 steps
 ```
 
 ## Data and credentials policy

@@ -159,6 +159,23 @@ restricted = true
 include = ["**.parquet", "**.csv", "figures/**.png"]
 description = "Regional AeroVal statistics, all vs background vs pyroCb scenes, per PPE member (pyro-regional)"
 
+[datasets.viirs_event_match]
+path = "derived/viirs_event_match"
+restricted = true
+include = ["**.parquet", "**.csv"]
+description = "VIIRS aerosol super-obs per event on the 3-hourly PPE grid and member samples (pyro-viirs grid)"
+
+[datasets.viirs_pixels]
+path = "raw/satellite/viirs_pixels"
+include = ["**.parquet"]
+description = "VIIRS Deep Blue / Dark Target L2 valid pixels, one parquet per product and month (re-derivable)"
+
+[datasets.animations]
+path = "derived/animations"
+restricted = true
+include = ["**.gif", "**.mp4"]
+description = "Plume animations of modelled AOD and SSA per event (pyro-animate); named after events"
+
 [datasets.dvc_store]
 # DVC `localstore` remote (content-addressed). Mirrors it to Drive/S3 with rclone,
 # an alternative to DVC's own gdrive remote, which needs a separate OAuth client.

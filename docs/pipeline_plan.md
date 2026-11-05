@@ -1,6 +1,6 @@
 # Pipeline plan. Step 1: prepare 2024–25 model data for comparison with PACE SPEXone and VIIRS around pyroCb events
 
-Scope: boreal pilot covering **all events in the table**: Alaska, Canada and Siberia / Northern Asia, kept and not kept (the `kept` flag is carried through, not used to drop rows). Model: **3-hourly output only** is matched to satellite overpasses: the PD 2024–25 ECHAM-HAM PPE `hifreq` fields (`ppe_source = ybhatti`), plus AeroCom 3-hourly models if the go/no-go check passes. Both 2024–25 PPEs, ECHAM-HAM (`ybhatti`) and ICON-HAM (`hjia`), are read through one adapter with a common schema (§1b′). The ICON-HAM PPE has no 3-hourly output: its 6-hourly PPE2025 starts after the 2024 events and its 2024–25 run is monthly, so ICON-HAM and other coarser output (MM PPE 6-hourly, monthly streams) are context only. They are collocated only on explicit request (`--allow-coarse`) and are always labelled by `resolution`. Observations for step 1 are PACE SPEXone (AOD, SSA, AE; RemoTAP) and VIIRS (AOD, AE; Deep Blue / Dark Target, and NOAA EPS). Step 1 stops at collocated parquet. Per-event aggregation against lookalike controls is outlined in §3 only.
+Scope: boreal pilot covering **all events in the table**: Alaska, Canada and Siberia / Northern Asia, kept and not kept (the `kept` flag is carried through, not used to drop rows). Model: **3-hourly output only** is matched to satellite overpasses: the PD 2024–25 ECHAM-HAM PPE `hifreq` fields (`ppe_source = ybhatti`), plus AeroCom 3-hourly models if the go/no-go check passes. Both 2024–25 PPEs, ECHAM-HAM (`ybhatti`) and ICON-HAM (`hjia`), are read through one adapter with a common schema (§1b′). The ICON-HAM PPE has no 3-hourly output: its 6-hourly PPE2025 starts after the 2024 events and its 2024–25 run is monthly, so ICON-HAM and other coarser output (MM PPE 6-hourly, monthly streams) are context only. Events are matched with the 3-hourly ECHAM-HAM output only; coarser output is used for the regional statistics (§1g, `--allow-coarse`) and is always labelled by `resolution`. Observations for step 1 are PACE SPEXone (AOD, SSA, AE; RemoTAP) and VIIRS (AOD, AE; Deep Blue / Dark Target, and NOAA EPS). Step 1 stops at collocated parquet. Per-event aggregation against lookalike controls is outlined in §3 only.
 
 What data exists and where the gaps are: [`data_inventory.md`](data_inventory.md). Where data lives and how it moves: [`storage_and_sync.md`](storage_and_sync.md). How to run the code anywhere: [`environment.md`](environment.md).
 
@@ -143,13 +143,21 @@ A first pass that answers "which events have SPEXone data at all" before the ful
 pyro-match "$PYRO_DATA_ROOT/events/<table>.csv"                       # all events, SPEXone only
 sbatch --account="$PYRO_SLURM_ACCOUNT" scripts/slurm/match_spexone.sbatch \
        "$PYRO_DATA_ROOT/events/<table>.csv"                           # + 3-hourly PPE, all members
-# both PPEs, ICON monthly as context:
-#   ... match_spexone.sbatch <table>.csv --ppe ybhatti_pd_3h --ppe hjia_pd_2024_25_monthly --allow-coarse
+pyro-match <table>.csv --model --max-hours-after 72                   # only the first 3 days
 ```
 
-- Every event in the table is processed (all regions; `kept` is kept as a column). Window: onset − 1 d to onset + 10 d. Pixels: SPEXone RemoTAP land + ocean extracts within 1000 km of `lon_c`/`lat_c` (great-circle distance, dateline-safe).
+From Python, one call per source with any limit:
+
+```python
+from pyro import match, ppe
+so, model = match.match_event_model(events, spex, ppe.open_source("ybhatti_pd_3h"),
+                                    radius_km=500, pre_hours=24, max_hours_after=72)
+```
+
+- Every event in the table is processed (all regions; `kept` is kept as a column). Window: onset − `--pre-hours` (24) to onset + `--max-hours-after` (240). Pixels: SPEXone RemoTAP land + ocean extracts within 1000 km of `lon_c`/`lat_c` (great-circle distance, dateline-safe), i.e. wherever the swath passed near the fire in the window.
+- **3-hourly output only.** `match_event_model` refuses any source that is not 3-hourly; the monthly ICON-HAM PPE is kept for the regional statistics (§1g). Each pixel goes to the nearest 3-hourly step (at most 1.5 h away) and model cell.
 - `summary.parquet/csv`: per event, pixel and overpass-day counts within 150 / 500 / 1000 km; pixels within 150 km between −1 d and +2 d (`n_pix_150km_m1d_p2d`); smoke-laden pixels (AOD550 ≥ 0.5) near and within 500 km; first post-onset overpass; median SSA of smoky pixels; whether the onset lies in the 3-hourly PPE period.
-- `--model [--ppe KEY ...]` (default `ybhatti_pd_3h`; non-3-hourly sources need `--allow-coarse`): for each source, pixels within 500 km are averaged to super-obs per (event, model step, model cell) with AOD, AAOD = AOD·(1 − SSA), SSA and AE(440–670) recomputed for the model pair. Every member is then sampled through `pyro.ppe` (`od550aer`, `abs550aer`, `ssa550aer`, `ae440_670`, `ae550_865`, where available) in the common schema.
+- `--model [--ppe KEY ...]` (default `ybhatti_pd_3h`; 3-hourly sources only): for each source, pixels within 500 km are averaged to super-obs per (event, model step, model cell) with AOD, AAOD = AOD·(1 − SSA), SSA and AE(440–670) recomputed for the model pair. Every member is then sampled through `pyro.ppe` (`od550aer`, `abs550aer`, `ssa550aer`, `ae440_670`, `ae550_865`, where available) in the common schema.
 - Outputs (`$PYRO_DATA_ROOT/derived/spexone_event_match/`, restricted): `pixels.parquet`, `summary.parquet`, `summary.csv`, and per source `superobs_<key>.parquet` and `model_<key>.parquet`.
 - First run on the 2024 boreal table: every region has SPEXone matches, including all Alaska events. The only events without any SPEXone pixel are the earliest ones whose whole window falls in May 2024, before the local SPEXone extracts start (June 2024). About half the events have smoke-laden pixels within 150 km in the first two days. Only events from August onwards can be compared with the 3-hourly PPE.
 - Caveats: distance rings are not plume corridors (§1a), so a smoky pixel 500 km away may belong to another fire; the AOD threshold is a screening aid, not attribution. The PPE period starts 2024-08-01, so June–July events have SPEXone matches but no 3-hourly model counterpart (inventory §6).
@@ -165,9 +173,11 @@ pyro-compare --ppe ybhatti_pd_3h --event <pcb_id>
 
 - `comparison.parquet`: one row per (event, source, super-obs, variable) with `obs`, `obs_unc`, `model_p05/median/p95`, `model_control`, `age_days`, `resolution`, `ppe_source`, `product`.
 - `metrics.parquet/csv` per (event, source, variable): `n_superobs`, `bias`, `log10_ratio` (AOD, AAOD), `frac_in_5_95` (share of observations inside the ensemble 5–95 % range), `bias_control`. `coverage.csv`: super-obs per event and source, all events listed.
-- `figures/<pcb_id>.png`: pixel map with fire position and 150/500 km rings, and observation vs ensemble time series; `figures/overview.png`: observed vs ensemble median over all events. Monthly sources are drawn as context with their own (monthly-cell) super-obs.
+- `figures/<pcb_id>.png`: pixel map with fire position and 150/500 km rings, and observation vs ensemble time series; `figures/overview.png`: observed vs ensemble median over all events.
+- Only 3-hourly sources are picked up by default (`discover_sources(..., include_coarse=False)`); older monthly event files in the match folder are ignored.
 - The notebook calls the same functions interactively and adds the regional section (§1g). Commit it without outputs.
-- First run (2024 boreal table): 71 of 73 events have super-obs for the ICON-HAM monthly PPE, 16 for the 3-hourly ECHAM-HAM PPE. Output in `$PYRO_DATA_ROOT/derived/event_comparison` (restricted).
+- First run (2024 boreal table): 16 of 73 events have 3-hourly ECHAM-HAM super-obs (onsets from August 2024). Output in `$PYRO_DATA_ROOT/derived/event_comparison` (restricted).
+- VIIRS super-obs (§1h) go through the same functions: point `--match-dir` at `derived/viirs_event_match`; AOD is compared, the VIIRS Ångström exponent is kept as `o_ae_native` because its wavelength pairs differ from the model's.
 
 ## 1g. Regional statistics: pyroCb scenes vs the regional average (implemented: `pyro-regional`)
 
@@ -186,6 +196,42 @@ pyro-regional "$PYRO_DATA_ROOT/events/<table>.csv" --ppe ybhatti_pd_3h \
 - `figures/regions_season.png`: bars per region for all / background / pyroCb (NMB, RMSE, R), whiskers = member 5–95 %. The notebook adds pyroCb − background differences per month.
 - Caveats: a 500 km ring is not a plume corridor (§1a), so `pyrocb` includes some unaffected pixels and `background` some smoke from other fires; plume corridors replace the ring once they exist. ICON-HAM monthly means cannot resolve an event; their categories differ only through where and when SPEXone sampled.
 
+## 1h. VIIRS gridding (implemented: `pyro.gridding`, `pyro-viirs`; no data yet)
+
+No VIIRS aerosol product is on Snellius (the shared `obs/viirs` folder holds the cloud product `CLDPROP_D3_VIIRS_NOAA20` only), so the step starts with a download.
+
+```bash
+pyro-viirs fetch  <table>.csv --product AERDB_L2_VIIRS_SNPP --product AERDB_L2_VIIRS_NOAA20
+pyro-viirs inspect <one granule>            # confirm the dataset names on the first real file
+pyro-viirs extract                          # granules -> <product>_<YYYY>_<MM>.parquet pixels
+pyro-viirs grid   <table>.csv --max-hours-after 240   # event super-obs + all ybhatti members
+pyro-compare --match-dir "$PYRO_DATA_ROOT/derived/viirs_event_match"
+```
+
+- **Download** (`fetch`): `earthaccess` (NASA LAADS), one CMR query per event and product with the event window as temporal filter and a box of `--radius-km` (1000) around the fire. Needs `EARTHDATA_TOKEN` or `EARTHDATA_USERNAME`/`EARTHDATA_PASSWORD`. Granules go to `raw/satellite/viirs/<product>/<YYYY>/<DOY>/`; existing files are skipped.
+- **Products**: Deep Blue `AERDB_L2_VIIRS_{SNPP,NOAA20,NOAA21}` (`Aerosol_Optical_Thickness_550_Land_Ocean_Best_Estimate`, `Angstrom_Exponent_Land_Ocean_Best_Estimate`, `Aerosol_Type_Land_Ocean`) and Dark Target `AERDT_L2_VIIRS_{SNPP,NOAA20}` (`Optical_Depth_Land_And_Ocean`). The best-estimate fields are already QA-filtered by the product; fill values, valid ranges and scale factors are applied; AOD is kept in 0–5. Pixel time is the scan start time, or the granule start from the file name (granules last 6 min).
+- **Gridding** (`pyro.gridding`, a polars port of AeroCom_Error `SPEXone_regrid_model.regrid_spexone` and `regional_aggregates.weights_from_defs`/`regional_means`): `grid_regular` (bins of `res_deg`, time rounded to 3 h, mean or median, std or half-IQR, uncertainties averaged as fully correlated, `min_points`), `grid_model` (nearest 3-hourly step and model cell of a PPE source; the super-obs that are sampled against every member), `regional_means` (cos(lat)-weighted, missing values skipped, over `config/regions.toml` boxes) and `pixels_near_events` (swath pixels within a radius of each fire in its window, any product). SPEXone and VIIRS share these functions.
+- **Ångström exponent**: VIIRS Deep Blue uses 412–488 nm over land and 550–865 nm over ocean, so it is stored as `o_ae_native` and not compared with the model's 440–670 nm value directly (use pyroCb − control differences).
+- NOAA EPS VIIRS AOD is not covered: 2024–25 has to be ordered from NOAA CLASS.
+
+## 1i. Plume animation (implemented: `pyro-animate`)
+
+Modelled AOD 550 nm and SSA 550 nm around an event, one frame per 3-hourly output step shown for 1 s, with coastlines, country and state/province borders (cartopy, Natural Earth 50 m) and the fire position.
+
+```bash
+pyro-animate <pcb_id>                                    # control member, +-1000 km, 24 steps from onset
+pyro-animate <pcb_id> --steps 40 --start-hours -6        # 40 steps from 6 h before onset
+pyro-animate <pcb_id> --lon-range -140 -100 --lat-range 50 70
+pyro-animate <pcb_id> --half-width-km 1500 --member median   # ensemble median of 251 members
+pyro-animate --center 61.5 -126 --start 2024-08-10T00 --steps 16 -o plume.mp4
+```
+
+- Coverage: a box 2 × `--half-width-km` (default 1000 km, i.e. about 2000 km) in longitude and latitude centred on `lon_c`/`lat_c`; `--lon-range`/`--lat-range` override it. The box may cross the dateline.
+- `--member`: `control` (default), `median`, `mean` or a member number. SSA is 1 − AAOD/AOD per cell and step.
+- Output: GIF (default, `$PYRO_DATA_ROOT/derived/animations/<pcb_id>_<member>.gif`, restricted because it is named after the event) or MP4 by suffix (needs `ffmpeg`, not installed on Snellius). `--seconds-per-frame` changes the 1 s default.
+- Python: `animate.model_fields(src, start, steps, box, member)` returns the fields; `animate.animate(fields, out, ...)` writes the file.
+- The Natural Earth shapefiles are cached in `~/.local/share/cartopy` after the first run, so batch jobs need no network.
+
 ## 2. Where each step runs
 
 | Step | Runs on | Reads | Writes | Synced? |
@@ -196,6 +242,8 @@ pyro-regional "$PYRO_DATA_ROOT/events/<table>.csv" --ppe ybhatti_pd_3h \
 | 1d collocation | Snellius or anywhere with the subsets | 1a–1c | `derived/collocation` | restricted |
 | 1e event × SPEXone match | Snellius (`rome`, one job) | event table, SPEXone extracts, PPE sources via `pyro.ppe` | `derived/spexone_event_match` | restricted (private Drive / S3) |
 | 1f per-event comparison | anywhere with the 1e output (notebook or `pyro-compare`) | `derived/spexone_event_match` | `derived/event_comparison` | restricted |
+| 1h VIIRS gridding | download on Snellius `staging` or anywhere; gridding on Snellius | NASA LAADS, PPE sources | `raw/satellite/viirs*`, `derived/viirs_event_match` | pixels re-downloadable; super-obs restricted |
+| 1i plume animation | Snellius (reads the stacked PPE) | PPE source, event table | `derived/animations` | restricted |
 | 1g regional statistics | Snellius (`rome`, one job; `scripts/slurm/regional_stats.sbatch`) | event table, SPEXone extracts, PPE sources | `derived/regional_stats` | restricted |
 | sync | Snellius `staging` or anywhere | — | remotes | `pyro-sync` / DVC |
 

@@ -34,7 +34,7 @@ Two 2024–25 PPEs are used side by side and read through one adapter (`pyro.ppe
 | SPEXone RemoTAP L2 extracts | PACE SPEXone, land + ocean, v4.0 | 2024-06 → 2025-12 | per pixel | — | Ready for collocation (AOT 340–865 nm, SSA, uncertainties) |
 | EarthCARE ATLID L3 | 2° daily mean extinction | 2024-08-01 → 2025-07-31 | daily | — | Profiles. Data before the public L2 release of 11 Mar 2025 need care |
 | AERONET | V3 AOD, SSA (L1.5/L2.0 inversions) | multi-year | daily / monthly | — | Ground truth at the sites plumes reach |
-| VIIRS (DB / DT / NOAA EPS), OMPS-LP | — | — | — | — | **Not on Snellius yet**; download in step 1c |
+| VIIRS (DB / DT / NOAA EPS), OMPS-LP | — | — | — | — | **No aerosol product on Snellius** (shared `obs/viirs` has only the cloud product `CLDPROP_D3_VIIRS_NOAA20`); `pyro-viirs fetch` downloads DB/DT L2 (pipeline plan §1h) |
 
 No TROPOMI aerosol product is used anywhere in this project.
 
@@ -189,4 +189,8 @@ Onset inside the period, all regions (exact counts in the restricted `pyro-event
 |---|---|---|
 | ECHAM 3-hourly (`ybhatti_pd_3h`) | the Aug–Sep onsets only (≈ one fifth: Canada and Northern Asia, no Alaska) | super-obs for about one fifth of the events; the primary comparison |
 | ICON 6-hourly (`hjia_pd2025_6h`) | none | none |
-| ICON monthly (`hjia_pd_2024_25_monthly`) | all onsets with end-of-month labels; all but the May onsets with start-of-month labels | monthly-mean super-obs for nearly every event (context only, `--allow-coarse`) |
+| ICON monthly (`hjia_pd_2024_25_monthly`) | all onsets with end-of-month labels; all but the May onsets with start-of-month labels | not matched to events (3-hourly only); used in the regional statistics (`pyro-regional --allow-coarse`) |
+
+### The hjia PPE in AeroCom_Error
+
+AeroCom_Error registers the monthly ICON-HAM PPE as `hjia2024` (`py/PPE_set.py`). `py/ppe_extract_hjia.py` reads the pyro parquet store and writes the pd2024 layout: `/scratch-shared/jzhang1/PPE/hjia2024/ensemble/{optical,emi,precip,deposition}_monthly.nc`, `(ens=392, time=15, lat=96, lon=192)` on the T63 grid. ICON cells are averaged into the T63 cell they fall in; 5058 mostly polar T63 cells without an ICON centre take the nearest ICON cell. Months are May 2024 to July 2025, stamped at month start; the source stamps mark the end of each mean. The remapping keeps global means: Aug 2024 AOD is 0.1258 on the ICON cells and 0.1261 on T63. For comparison, ICON-HAM's global AOD (median member, mean over the 15 months) is 0.106, against 0.157 for ECHAM-HAM pd2024. Burdens are absent, so MEC, MAC and lifetimes are not available; dry deposition (`dry{ss,so4,so2,bc,oa,du}`) is. Branch `cursor/hjia-ppe` of AeroCom_Error.
