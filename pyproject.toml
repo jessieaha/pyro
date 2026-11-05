@@ -7,7 +7,7 @@ license = "MIT"
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "numpy>=1.26",
-    "pandas>=2.2",
+    "polars>=1.20",
     "pyarrow>=16",
 ]
 
@@ -17,6 +17,7 @@ analysis = [
     "xarray>=2024.6",
     "netcdf4>=1.7",
     "h5netcdf>=1.3",
+    "h5py>=3.11",
     "dask[array]>=2024.6",
     "scipy>=1.13",
     "pyproj>=3.6",
@@ -25,10 +26,16 @@ analysis = [
     "cdsapi>=0.7",
     "s3fs>=2024.6",
     "matplotlib>=3.8",
+    "cartopy>=0.24",
+]
+# Jupyter kernel for notebooks/ (Cursor / VS Code / JupyterLab on Open OnDemand).
+notebook = [
+    "ipykernel>=6.29",
+    "matplotlib>=3.8",
 ]
 # Versioned data exchange with collaborators (`dvc pull`).
 dvc = [
-    "dvc[s3,webdav,ssh]>=3.50",
+    "dvc[s3,webdav,ssh,gdrive]>=3.50",
 ]
 
 [dependency-groups]
@@ -40,6 +47,14 @@ dev = [
 [project.scripts]
 pyro-sync = "pyro.sync:main"
 pyro-events = "pyro.events:main"
+pyro-match = "pyro.match:main"
+pyro-icon = "pyro.icon_ppe:main"
+pyro-query = "pyro.store:main"
+pyro-ppe = "pyro.ppe:main"
+pyro-compare = "pyro.compare:main"
+pyro-regional = "pyro.regional:main"
+pyro-viirs = "pyro.viirs:main"
+pyro-animate = "pyro.animate:main"
 
 [build-system]
 requires = ["hatchling>=1.25"]

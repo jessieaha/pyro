@@ -66,12 +66,17 @@ checksum = true
 description = "Snellius project space over SFTP (use from laptop / Codespaces / ADA)"
 
 [remotes.gdrive]
+# VU Google Workspace account (1 TB): private, institution-managed, so it may hold
+# restricted, event-keyed products. Never create "anyone with the link" shares.
+# Drive limits: ~750 GB/day upload, a few file creations/s -> keep parquet files
+# large (>= 50 MB) and few. The token lives in the user's rclone.conf, not here.
 rclone_remote = "pyrogdrive"
 root = "${PYRO_GDRIVE_ROOT:-pyro}"
 public = false
-restricted_ok = false
+restricted_ok = true
 checksum = true
-description = "University Google Drive - documents, figures, small tables only"
+description = "VU Google Drive (1 TB) - shared parquet store, queried via pyro-query"
+setup = "scripts/gdrive_setup.sh  (links Drive or repairs a remote without OAuth token)"
 extra_flags = ["--tpslimit=8", "--drive-chunk-size=64M", "--max-transfer=700G", "--cutoff-mode=soft"]
 
 [remotes.commercial_s3]
@@ -99,7 +104,7 @@ description = "Public bucket for released, open data products"
 [datasets.events]
 path = "events"
 restricted = true
-allowed_remotes = ["surf_s3", "research_drive", "snellius"]
+allowed_remotes = ["surf_s3", "research_drive", "snellius", "gdrive"]
 include = ["*.csv", "*.parquet", "*.gpkg", "*.xlsx", "README*"]
 description = "Fire-side event tables (pyroCb events, lookalike controls); unpublished"
 
@@ -125,6 +130,59 @@ path = "derived/event_aggregates"
 restricted = true
 include = ["**.parquet", "**.csv", "**.json"]
 description = "Per-event pyroCb vs control aggregates and attribution tables"
+
+# PPE sources are read in place through pyro.ppe (config/ppe_sources.toml). Only the
+# ICON-HAM monthly store is synced: its netCDF source folder is temporary. The ECHAM-HAM
+# stacked files (~54 GB per variable) and the ICON-HAM PPE2025 dmftar archives (~1 TB)
+# stay on Snellius; event subsets of both go out through spexone_event_match.
+[datasets.icon_ppe]
+path = "${ICON_PPE_STORE}"
+remote_subdir = "model/icon_ham_ppe_24_25"
+include = ["values/**.parquet", "*.parquet", "*.json"]
+description = "ICON-HAM PD PPE 2024-25 (ppe_source hjia) monthly, all variables, parquet (pyro-icon convert)"
+
+[datasets.spexone_event_match]
+path = "derived/spexone_event_match"
+restricted = true
+include = ["**.parquet", "**.csv"]
+description = "pyroCb event x SPEXone pixel matches, super-obs and PPE samples per source (superobs_<key>, model_<key>; common pyro.ppe schema)"
+
+[datasets.event_comparison]
+path = "derived/event_comparison"
+restricted = true
+include = ["**.parquet", "**.csv", "figures/**.png"]
+description = "Per-event SPEXone vs PPE ensemble comparison: table, metrics, coverage, figures (pyro-compare)"
+
+[datasets.regional_stats]
+path = "derived/regional_stats"
+restricted = true
+include = ["**.parquet", "**.csv", "figures/**.png"]
+description = "Regional AeroVal statistics, all vs background vs pyroCb scenes, per PPE member (pyro-regional)"
+
+[datasets.viirs_event_match]
+path = "derived/viirs_event_match"
+restricted = true
+include = ["**.parquet", "**.csv"]
+description = "VIIRS aerosol super-obs per event on the 3-hourly PPE grid and member samples (pyro-viirs grid)"
+
+[datasets.viirs_pixels]
+path = "raw/satellite/viirs_pixels"
+include = ["**.parquet"]
+description = "VIIRS Deep Blue / Dark Target L2 valid pixels, one parquet per product and month (re-derivable)"
+
+[datasets.animations]
+path = "derived/animations"
+restricted = true
+include = ["**.gif", "**.mp4"]
+description = "Plume animations of modelled AOD and SSA per event (pyro-animate); named after events"
+
+[datasets.dvc_store]
+# DVC `localstore` remote (content-addressed). Mirrors it to Drive/S3 with rclone,
+# an alternative to DVC's own gdrive remote, which needs a separate OAuth client.
+path = "${PYRO_DVC_STORE}"
+remote_subdir = "dvc"
+restricted = true
+description = "DVC object store (localstore remote) - versioned snapshots"
 
 [datasets.figures]
 path = "figures"

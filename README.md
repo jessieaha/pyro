@@ -4,7 +4,7 @@ This project compares pyroCb and matched non-pyroCb fires in AeroCom and multi-m
 
 Aerosol side: Jessie Zhang (VU Amsterdam). Fire side (event detection and matching): Jelle Kraak (VU Amsterdam).
 
-> **Status:** planning and scaffold. Step 1 is model and satellite preparation around the 2024 boreal event list. The sync tool and the event-table utilities work; the extraction, download and collocation modules are planned in [`docs/pipeline_plan.md`](docs/pipeline_plan.md).
+> **Status:** step 1 in progress. Working: the sync tool (Google Drive / S3 / Research Drive), event-table utilities, event × SPEXone matching with PPE sampling (`pyro-match`), a common reader for the ECHAM-HAM and ICON-HAM PPEs (`pyro-ppe`), the ICON-HAM PPE parquet store (`pyro-icon`), in-place parquet queries (`pyro-query`), per-event observation-vs-ensemble comparison (`pyro-compare`, `notebooks/event_comparison.ipynb`) and regional AeroVal statistics for pyroCb vs background scenes (`pyro-regional`). Corridors, VIIRS download and full collocation are planned in [`docs/pipeline_plan.md`](docs/pipeline_plan.md). All tables use polars.
 
 ## Project flowchart
 
@@ -16,9 +16,12 @@ flowchart TD
   end
 
   subgraph MODEL["Model extraction (Snellius)"]
-    PPE["ECHAM-HAM PPE, 251 members<br/>3-hourly, Aug 2024 - Jul 2025"]
-    MM["Multi-model PPE 2025<br/>6-hourly"]
+    PPE["ECHAM-HAM PPE (ybhatti), 251 members<br/>3-hourly, Aug 2024 - Jul 2025"]
     AC["AeroCom 3-hourly 2024-25<br/>(go/no-go)"]
+    MM["Multi-model PPE 2025, 6-hourly<br/>context only"]
+    ICON["ICON-HAM PPE 2024-25 (hjia), 392 members<br/>monthly, context only"]
+    ICON6["ICON-HAM PPE2025 (hjia), 308 members<br/>6-hourly, Oct 2024 - Dec 2025, dmftar"]
+    ADAPT["Common PPE reader, pyro.ppe<br/>canonical names and units, ppe_source, member"]
   end
 
   subgraph OBS["Satellite and ground retrievals"]
@@ -28,11 +31,30 @@ flowchart TD
     AERO["AERONET V3"]
   end
 
+  EV --> MATCH["Event x SPEXone match, all events<br/>pyro-match: 150 / 500 / 1000 km rings"]
+  SPEX --> MATCH
+  PPE --> ADAPT
+  ICONPQ --> ADAPT
+  ICON6 -->|"read in place"| ADAPT
+  ADAPT -->|"ybhatti 3-hourly only, all members<br/>onset -pre_hours to +max_hours_after"| MATCH
+  MATCH --> COL
+  MATCH --> CMP["Per-event comparison<br/>pyro-compare, notebook: obs vs ensemble"]
+  VIIRS --> VG["VIIRS gridding, pyro-viirs<br/>fetch, extract, super-obs on the 3-hourly grid"]
+  EV --> VG
+  ADAPT -->|"3-hourly"| VG
+  VG --> CMP
+  ADAPT -->|"3-hourly fields"| ANIM["Plume animation, pyro-animate<br/>AOD and SSA, 1 s per model step"]
+  EV --> ANIM
+  SPEX --> REG["Regional statistics, AeroVal metrics<br/>pyro-regional: all vs background vs pyroCb"]
+  EV --> REG
+  ADAPT -->|"3-hourly and monthly, all members"| REG
+  CMP --> AGG
+  REG --> AGG
+  ICON --> ICONPQ[("ICON-HAM parquet store<br/>pyro-icon, all variables")]
   EV --> WIN["Event windows and plume corridors<br/>onset -1 d to +10 d, ERA5 trajectories"]
   CT --> WIN
   WIN --> SUB["Model subsets<br/>boreal band, union of event windows"]
-  PPE --> SUB
-  MM --> SUB
+  ADAPT --> SUB
   AC --> SUB
   WIN --> DL["Satellite download<br/>earthaccess, NOAA CLASS"]
   SPEX --> DL
@@ -50,18 +72,45 @@ flowchart TD
 
   subgraph STORE["Storage and sync layer"]
     SNEL[("Snellius project space<br/>raw model output, compute")]
-    S3[("SURF Object Store, S3<br/>shared, DVC remote")]
-    RD[("SURF Research Drive<br/>fallback, exchange")]
+    SCR[("scratch-shared working copy<br/>keep-alive job every 12 d")]
+    GD[("VU Google Drive, 1 TB<br/>shared parquet store, DVC default remote")]
+    S3[("SURF Object Store, S3<br/>upgrade path beyond 1 TB")]
+    RD[("SURF Research Drive<br/>exchange with fire side")]
   end
 
   SNEL --- PPE
-  SUB -.->|"pyro-sync"| S3
-  COL -.->|"pyro-sync / dvc push"| S3
-  AGG -.->|"pyro-sync / dvc push"| S3
+  ICONPQ --- SCR
+  SUB -.->|"pyro-sync"| GD
+  ICONPQ -.->|"pyro-sync"| GD
+  COL -.->|"pyro-sync / dvc push"| GD
+  AGG -.->|"pyro-sync / dvc push"| GD
+  GD -.->|"pyro-query in place"| AGG
+  GD -.->|"if > 1 TB"| S3
   EV -.->|"restricted, private remotes only"| RD
 ```
 
 TROPOMI aerosol products are not used.
+
+## How the code runs
+
+One recipe (`Dockerfile`) and one pinned package list (`uv.lock`) produce one environment. GitHub builds it into an image; a laptop runs that image with Docker; Snellius has no Docker, so Apptainer converts the same image into a single file and runs it. The full guide, written for someone new to containers, is [`docs/environment.md`](docs/environment.md).
+
+```mermaid
+flowchart TD
+  src["Dockerfile + uv.lock in git"]
+  ci["GitHub Actions builds the image on main"]
+  reg[("ghcr.io/jessieaha/pyro:latest")]
+  lap["Laptop / Codespaces / Cursor<br/>Docker or the devcontainer"]
+  sif["Snellius / ADA: apptainer build → pyro.sif<br/>Slurm runs commands inside it"]
+  venv["Or skip the container:<br/>uv sync into .venv, same lock file"]
+
+  src --> ci --> reg
+  reg --> lap
+  reg --> sif
+  src --> venv
+```
+
+The image holds Python, the libraries and tools (`cdo`, `rclone`). It does not hold data or passwords: GPFS folders are handed in with `--bind`, and paths live in the gitignored `config/local.env`. On Snellius today the `.venv` route is enough; the `.sif` route is for batch jobs that must match the published image exactly.
 
 ## Repository layout
 
@@ -70,9 +119,21 @@ TROPOMI aerosol products are not used.
 | `docs/data_inventory.md` | What 2024–25 PPE / AeroCom / observation data exists on Snellius, and the gaps |
 | `docs/pipeline_plan.md` | Step 1 plan: event windows, model subsetting, satellite download, collocation to parquet |
 | `docs/storage_and_sync.md` | Storage comparison, recommendation, sync tool and DVC usage, licensing rules |
-| `docs/environment.md` | Devcontainer / Docker / Apptainer (Snellius, ADA) / Kubernetes |
+| `docs/environment.md` | Container setup explained from scratch: Docker, devcontainer, Apptainer on Snellius, `.venv` |
 | `src/pyro/sync.py`, `scripts/sync.sh` | `pyro-sync`: rclone-based, config-driven sync (dry-run default) |
 | `src/pyro/events.py` | `pyro-events`: event-table validation, windows, period coverage |
+| `src/pyro/match.py` | `pyro-match`: all events × SPEXone pixels, super-obs, PPE sampling through `pyro.ppe` (all members) |
+| `src/pyro/ppe.py`, `config/ppe_sources.toml` | `pyro-ppe`: one reader/adapter for both PPEs (ybhatti ECHAM-HAM, hjia ICON-HAM) with a common schema |
+| `src/pyro/compare.py`, `notebooks/event_comparison.ipynb` | `pyro-compare`: per-event SPEXone super-obs vs ensemble median / 5–95 % / control, metrics and figures |
+| `src/pyro/regional.py`, `config/regions.toml` | `pyro-regional`: AeroVal statistics per region for the regional average, background and pyroCb-affected scenes, per member |
+| `src/pyro/gridding.py` | Pixel gridding (regular bins or the PPE grid) and cos(lat)-weighted regional means, ported from AeroCom_Error |
+| `src/pyro/viirs.py` | `pyro-viirs`: VIIRS Deep Blue / Dark Target L2 download, pixel extracts, event super-obs |
+| `src/pyro/animate.py` | `pyro-animate`: AOD and SSA plume animation around an event, borders, 1 s per model step |
+| `src/pyro/icon_ppe.py` | `pyro-icon`: ICON-HAM PPE netCDF → partitioned parquet store, with verification |
+| `src/pyro/store.py` | `pyro-query`: polars queries on local parquet or in place on Drive via `rclone serve s3` |
+| `scripts/gdrive_setup.sh` | Link the VU Google Drive to rclone, or repair a remote saved without token (token stays outside the repo) |
+| `scripts/apptainer_kernel.sh` | Jupyter kernel that runs inside the Apptainer image |
+| `scripts/scratch_keepalive.sh` | Single self-resubmitting job that refreshes scratch every 12 days |
 | `config/` | `sync.toml` (datasets, remotes), `*.example` templates; `local.env` is gitignored |
 | `Dockerfile`, `.devcontainer/`, `containers/`, `k8s/` | Portable environment |
 | `.dvc/` | DVC remotes (placeholders; real URLs go in `.dvc/config.local`) |
@@ -85,7 +146,13 @@ cp config/local.env.example config/local.env   # machine paths only, gitignored
 uv run pytest
 uv run pyro-events coverage "$PYRO_DATA_ROOT/events/<event_table>.csv"
 scripts/sync.sh remotes                   # which storage remotes are configured
-scripts/sync.sh push model_subsets -r surf_s3   # dry run
+scripts/gdrive_setup.sh                   # once: link the VU Google Drive
+scripts/sync.sh push icon_ppe -r gdrive   # dry run
+uv run pyro-ppe list                      # configured PPE sources
+uv run pyro-match "$PYRO_DATA_ROOT/events/<event_table>.csv"
+uv run pyro-compare                       # per-event figures from the pyro-match output
+uv run pyro-regional "$PYRO_DATA_ROOT/events/<event_table>.csv"   # regional statistics
+uv run pyro-animate <pcb_id>              # plume animation (AOD, SSA), +-1000 km, 24 steps
 ```
 
 ## Data and credentials policy

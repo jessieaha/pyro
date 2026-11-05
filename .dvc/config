@@ -1,7 +1,7 @@
 [core]
     analytics = false
     autostage = true
-    remote = surf
+    remote = gdrive
 ['remote "surf"']
     url = s3://pyro/dvc
     endpointurl = https://objectstore.surf.nl
@@ -9,3 +9,8 @@
     url = webdavs://INSTANCE.data.surfsara.nl/remote.php/webdav/pyro/dvc
 ['remote "snellius"']
     url = ssh://snellius.surf.nl/PATH/TO/pyro_data/dvc
+['remote "gdrive"']
+    url = gdrive://GDRIVE_FOLDER_ID
+    gdrive_acknowledge_abuse = false
+['remote "localstore"']
+    url = /PATH/TO/pyro_dvc_store

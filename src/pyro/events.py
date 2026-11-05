@@ -11,12 +11,15 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
 
 REQUIRED_COLUMNS = ("pcb_id", "onset_utc", "region", "lon_c", "lat_c", "kept")
 BOOL_COLUMNS = ("kept", "is_confirmed")
+ONSET_FORMAT = "%Y-%m-%d %H:%M:%S"
+UTC_DATETIME = pl.Datetime("us", "UTC")
 
 # Temporal coverage of the data products (end exclusive), as inventoried on
 # Snellius 2026-11-03; see docs/data_inventory.md. None = open ended.
@@ -28,90 +31,139 @@ PERIODS: dict[str, tuple[str, str | None]] = {
     "atlid_l2_public": ("2025-03-11", None),
 }
 
+_BOOL_STRINGS = {"true": True, "false": False, "1": True, "0": False, "yes": True, "no": False}
+
 
 class EventTableError(ValueError):
     pass
 
 
-def _to_bool(s: pd.Series) -> pd.Series:
-    if s.dtype == bool:
+def _to_bool(s: pl.Series) -> pl.Series:
+    if s.dtype == pl.Boolean:
+        if s.null_count():
+            raise EventTableError(f"missing values in {s.name}")
         return s
-    mapping = {"true": True, "false": False, "1": True, "0": False, "yes": True, "no": False}
-    out = s.astype(str).str.strip().str.lower().map(mapping)
-    if out.isna().any():
-        bad = s[out.isna()].unique()[:5]
-        raise EventTableError(f"non-boolean values in {s.name}: {list(bad)}")
-    return out.astype(bool)
+    out = s.cast(pl.String).str.strip_chars().str.to_lowercase()
+    out = out.replace_strict(_BOOL_STRINGS, default=None, return_dtype=pl.Boolean)
+    if out.null_count():
+        bad = s.filter(out.is_null()).unique(maintain_order=True).head(5).to_list()
+        raise EventTableError(f"non-boolean values in {s.name}: {bad}")
+    return out
 
 
-def load_events(path: str | Path) -> pd.DataFrame:
+def _to_utc(s: pl.Series) -> pl.Series:
+    if s.dtype == pl.String:
+        try:
+            return s.str.to_datetime(ONSET_FORMAT, time_zone="UTC", time_unit="us")
+        except pl.exceptions.InvalidOperationError:
+            return s.str.to_datetime(time_zone="UTC", time_unit="us")
+    if isinstance(s.dtype, pl.Datetime):
+        if s.dtype.time_zone is None:
+            return s.dt.replace_time_zone("UTC").cast(UTC_DATETIME)
+        return s.dt.convert_time_zone("UTC").cast(UTC_DATETIME)
+    raise EventTableError(f"onset_utc has unsupported dtype {s.dtype}")
+
+
+def load_events(path: str | Path) -> pl.DataFrame:
     """Read and validate an event table (CSV or parquet)."""
     path = Path(path)
-    df = pd.read_parquet(path) if path.suffix == ".parquet" else pd.read_csv(path)
+    if path.suffix == ".parquet":
+        df = pl.read_parquet(path)
+    else:
+        df = pl.read_csv(path, infer_schema_length=None)
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
         raise EventTableError(f"{path.name}: missing columns {missing}")
-    if df["pcb_id"].duplicated().any():
-        dups = df.loc[df["pcb_id"].duplicated(), "pcb_id"].tolist()[:5]
+    dup = df["pcb_id"].is_duplicated()
+    if dup.any():
+        dups = df.filter(dup)["pcb_id"].unique(maintain_order=True).head(5).to_list()
         raise EventTableError(f"duplicate pcb_id: {dups}")
-    df = df.copy()
-    df["onset_utc"] = pd.to_datetime(df["onset_utc"], utc=True)
-    for col in BOOL_COLUMNS:
-        if col in df.columns:
-            df[col] = _to_bool(df[col])
-    if not df["lon_c"].between(-180, 180).all() or not df["lat_c"].between(-90, 90).all():
+    try:
+        onset = _to_utc(df["onset_utc"])
+    except pl.exceptions.PolarsError as exc:
+        raise EventTableError(f"cannot parse onset_utc: {exc}") from exc
+    df = df.with_columns(onset)
+    df = df.with_columns(_to_bool(df[c]) for c in BOOL_COLUMNS if c in df.columns)
+    in_range = df.select(
+        (pl.col("lon_c").is_between(-180, 180) & pl.col("lat_c").is_between(-90, 90)).all()
+    ).item()
+    if not in_range:
         raise EventTableError("lon_c/lat_c out of range")
     if "role" not in df.columns:
-        df["role"] = "pyrocb"
+        df = df.with_columns(role=pl.lit("pyrocb"))
     return df
 
 
-def add_windows(df: pd.DataFrame, pre_days: float = 1.0, post_days: float = 10.0) -> pd.DataFrame:
+def add_windows(df: pl.DataFrame, pre_days: float = 1.0, post_days: float = 10.0) -> pl.DataFrame:
     """Comparison window per event: [onset - pre_days, onset + post_days].
 
     The pre-onset day carries the same-day polar-orbiter overpass, which for
     afternoon onsets usually precedes the pyroCb; post-onset days cover the
     aged, downwind plume.
     """
-    out = df.copy()
-    out["window_start"] = out["onset_utc"] - pd.to_timedelta(pre_days, unit="D")
-    out["window_end"] = out["onset_utc"] + pd.to_timedelta(post_days, unit="D")
-    return out
+    return df.with_columns(
+        window_start=pl.col("onset_utc") - timedelta(days=pre_days),
+        window_end=pl.col("onset_utc") + timedelta(days=post_days),
+    )
 
 
-def _period_bounds(start: str, end: str | None) -> tuple[pd.Timestamp, pd.Timestamp]:
-    s = pd.Timestamp(start, tz="UTC")
-    e = pd.Timestamp(end, tz="UTC") if end else pd.Timestamp.max.tz_localize("UTC")
+def _period_bounds(start: str, end: str | None) -> tuple[datetime, datetime | None]:
+    s = datetime.fromisoformat(start).replace(tzinfo=UTC)
+    e = datetime.fromisoformat(end).replace(tzinfo=UTC) if end else None
     return s, e
 
 
 def coverage(
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     periods: Mapping[str, tuple[str, str | None]] = PERIODS,
     by: str | None = "region",
-) -> pd.DataFrame:
-    """Count events whose onset / full window / any part of the window is in each period."""
+) -> pl.DataFrame:
+    """Count events whose onset / full window / any part of the window is in each period.
+
+    Counts cover every row of ``df`` (kept or not), as an ``all`` group plus one
+    group per value of ``by``; the ``*_kept`` columns repeat each count for the
+    ``kept == True`` subset.
+    """
     if "window_start" not in df.columns:
         df = add_windows(df)
-    rows = []
-    groups = [("all", df)] if by is None else [("all", df), *df.groupby(by)]
+    key = by or "group"
+    onset, ws, we = pl.col("onset_utc"), pl.col("window_start"), pl.col("window_end")
+    kept = pl.col("kept")
+    frames = []
     for name, (start, end) in periods.items():
         ps, pe = _period_bounds(start, end)
-        for key, g in groups:
-            onset = (g["onset_utc"] >= ps) & (g["onset_utc"] < pe)
-            full = (g["window_start"] >= ps) & (g["window_end"] <= pe)
-            anyo = (g["window_end"] > ps) & (g["window_start"] < pe)
-            rows.append(
-                {
-                    "period": name,
-                    by or "group": key,
-                    "n_events": len(g),
-                    "onset_in": int(onset.sum()),
-                    "window_full": int(full.sum()),
-                    "window_any": int(anyo.sum()),
-                }
+        flags = {
+            "onset_in": (onset >= ps) & (onset < pe) if pe else onset >= ps,
+            "window_full": (ws >= ps) & (we <= pe) if pe else ws >= ps,
+            "window_any": (we > ps) & (ws < pe) if pe else we > ps,
+        }
+        aggs = [pl.len().alias("n_events"), kept.sum().alias("n_kept")]
+        for col, cond in flags.items():
+            aggs += [cond.sum().alias(col), (cond & kept).sum().alias(f"{col}_kept")]
+        total = df.select(aggs).with_columns(pl.lit("all").alias(key))
+        parts = [total]
+        if by is not None:
+            parts.append(
+                df.group_by(by)
+                .agg(aggs)
+                .sort(by)
+                .with_columns(pl.col(by).cast(pl.String).alias(key))
             )
-    return pd.DataFrame(rows)
+        frames.append(pl.concat(parts, how="diagonal").with_columns(period=pl.lit(name)))
+    cols = ["period", key, "n_events", "n_kept"]
+    cols += [c for f in ("onset_in", "window_full", "window_any") for c in (f, f"{f}_kept")]
+    return pl.concat(frames).select(cols).with_columns(pl.col(cols[2:]).cast(pl.Int64))
+
+
+def write_table(df: pl.DataFrame, path: str | Path) -> Path:
+    """Write ``df`` as CSV if ``path`` ends in ``.csv``, otherwise as parquet."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix == ".csv":
+        df.write_csv(path)
+    else:
+        df.write_parquet(path)
+    return path
 
 
 def _parse_periods(items: Sequence[str]) -> dict[str, tuple[str, str | None]]:
@@ -133,10 +185,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     cov.add_argument("events")
     cov.add_argument("--pre-days", type=float, default=1.0)
     cov.add_argument("--post-days", type=float, default=10.0)
-    cov.add_argument("--all", action="store_true", help="include rows with kept == False")
+    cov.add_argument(
+        "--all",
+        action="store_true",
+        help="no-op, kept for compatibility: coverage always counts all rows (*_kept columns)",
+    )
     cov.add_argument("--period", action="append", default=[], help="name=START/END (add/override)")
 
-    win = sub.add_parser("windows", help="write per-event comparison windows to parquet")
+    win = sub.add_parser("windows", help="write per-event comparison windows (.parquet or .csv)")
     win.add_argument("events")
     win.add_argument("-o", "--output", required=True)
     win.add_argument("--pre-days", type=float, default=1.0)
@@ -149,20 +205,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     except EventTableError as exc:
         print(f"pyro-events: error: {exc}", file=sys.stderr)
         return 2
-    if not args.all:
-        df = df[df["kept"]]
     df = add_windows(df, args.pre_days, args.post_days)
 
     if args.command == "coverage":
         table = coverage(df, _parse_periods(args.period))
-        with pd.option_context("display.width", 120, "display.max_rows", 200):
-            print(table.to_string(index=False))
+        with pl.Config(
+            tbl_rows=200,
+            tbl_cols=-1,
+            tbl_width_chars=160,
+            tbl_hide_dataframe_shape=True,
+            tbl_hide_column_data_types=True,
+        ):
+            print(table)
         return 0
 
-    out = Path(args.output)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(out, index=False)
-    print(f"wrote {len(df)} event windows to {out}")
+    if not args.all:
+        df = df.filter(pl.col("kept"))
+    out = write_table(df, args.output)
+    print(f"wrote {df.height} event windows to {out}")
     return 0
 
 

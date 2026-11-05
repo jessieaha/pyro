@@ -1,0 +1,16 @@
+# Regions for the regional statistics (pyro-regional). Names match the `region`
+# column of the event tables. Boxes must not overlap: lon_min is inclusive,
+# lon_max exclusive, longitudes in [-180, 180). Generic geography only; the
+# events themselves stay in the restricted table.
+
+[regions.Alaska]
+lat = [55.0, 72.0]
+lon = [-170.0, -141.0]
+
+[regions.Canada]
+lat = [48.0, 70.0]
+lon = [-141.0, -60.0]
+
+[regions."Northern Asia"]
+lat = [45.0, 72.0]
+lon = [60.0, 170.0]

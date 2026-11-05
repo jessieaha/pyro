@@ -40,6 +40,7 @@ COPY config ./config
 COPY scripts ./scripts
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --all-extras \
+ && python -m ipykernel install --prefix /opt/venv --name pyro --display-name "pyro (container)" \
  && chmod -R a+rX /opt/venv /opt/pyro
 
 # HPC runtimes run as the calling user; keep the image usable by any UID.
