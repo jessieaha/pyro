@@ -202,8 +202,16 @@ def summarize(events: pl.DataFrame, matches: pl.DataFrame) -> pl.DataFrame:
 # --------------------------------------------------------------------------- model
 
 
-def superobs(matches: pl.DataFrame, src: ppe.Source, max_km: float) -> pl.DataFrame:
-    """Average pixels per (event, model time step, model cell) of ``src``."""
+EVENT_KEYS = ("pcb_id", "region", "kept")
+
+
+def superobs(
+    matches: pl.DataFrame,
+    src: ppe.Source,
+    max_km: float,
+    keys: tuple[str, ...] = EVENT_KEYS,
+) -> pl.DataFrame:
+    """Average pixels per (``keys``, model time step, model cell) of ``src``."""
     m = matches.filter(pl.col("dist_km") <= max_km)
     if m.is_empty():
         return pl.DataFrame()
@@ -217,7 +225,7 @@ def superobs(matches: pl.DataFrame, src: ppe.Source, max_km: float) -> pl.DataFr
     m = pl.concat([m, loc], how="horizontal").filter(pl.col("t_idx") >= 0)
     ae = -(pl.col("aot_440nm") / pl.col("aot_670nm")).log() / math.log(440 / 670)
     return (
-        m.group_by("pcb_id", "region", "kept", "t_idx", "cell")
+        m.group_by(*keys, "t_idx", "cell")
         .agg(
             pl.col("model_time", "model_lat", "model_lon").first(),
             pl.len().alias("n_pix"),
@@ -237,14 +245,17 @@ def superobs(matches: pl.DataFrame, src: ppe.Source, max_km: float) -> pl.DataFr
             pl.lit(src.ppe_source).alias("ppe_source"),
             pl.lit(src.resolution).alias("resolution"),
         )
-        .sort("pcb_id", "t_idx", "cell")
+        .sort(*keys, "t_idx", "cell")
     )
 
 
 def sample_model(
-    so: pl.DataFrame, src: ppe.Source, variables: list[str] | None = None
+    so: pl.DataFrame,
+    src: ppe.Source,
+    variables: list[str] | None = None,
+    keys: tuple[str, ...] = ("pcb_id",),
 ) -> pl.DataFrame:
-    """All members of ``src`` at the super-obs (common PPE schema plus ``pcb_id``)."""
+    """All members of ``src`` at the super-obs (common PPE schema plus ``keys``)."""
     if so.is_empty():
         return pl.DataFrame()
     want = [
@@ -259,16 +270,16 @@ def sample_model(
         pl.col("model_lon").alias("lon"),
     )
     df = ppe.sample(src, pts, want)
-    keys = so.select(
-        pl.int_range(pl.len(), dtype=pl.Int64).alias("point_id"), "pcb_id", "t_idx", "cell"
+    ref = so.select(
+        pl.int_range(pl.len(), dtype=pl.Int64).alias("point_id"), *keys, "t_idx", "cell"
     )
-    check = df.select("point_id", "t_idx", "cell").unique().join(keys, on="point_id")
+    check = df.select("point_id", "t_idx", "cell").unique().join(ref, on="point_id")
     if (
         not (check["t_idx"] == check["t_idx_right"]).all()
         or not (check["cell"] == check["cell_right"]).all()
     ):
         raise RuntimeError("super-obs moved to another model step or cell when resampled")
-    return df.join(keys.select("point_id", "pcb_id"), on="point_id").select("pcb_id", *df.columns)
+    return df.join(ref.select("point_id", *keys), on="point_id").select(*keys, *df.columns)
 
 
 # --------------------------------------------------------------------------- CLI
