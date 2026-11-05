@@ -26,6 +26,7 @@ analysis = [
     "cdsapi>=0.7",
     "s3fs>=2024.6",
     "matplotlib>=3.8",
+    "cartopy>=0.24",
 ]
 # Jupyter kernel for notebooks/ (Cursor / VS Code / JupyterLab on Open OnDemand).
 notebook = [
@@ -52,6 +53,8 @@ pyro-query = "pyro.store:main"
 pyro-ppe = "pyro.ppe:main"
 pyro-compare = "pyro.compare:main"
 pyro-regional = "pyro.regional:main"
+pyro-viirs = "pyro.viirs:main"
+pyro-animate = "pyro.animate:main"
 
 [build-system]
 requires = ["hatchling>=1.25"]
