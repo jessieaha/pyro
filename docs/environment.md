@@ -12,9 +12,18 @@ There is one image definition (`Dockerfile`) and one lock file (`uv.lock`). Code
 
 ## Contents
 
-- Python 3.12 (Debian bookworm slim) with locked dependencies from `uv.lock`. Core: numpy, polars, pyarrow. `analysis` extra: xarray, netCDF4, h5netcdf, dask, scipy, pyproj, shapely, earthaccess, cdsapi, s3fs, matplotlib. `dvc` extra: dvc with s3, webdav and ssh support.
+- Python 3.12 (Debian bookworm slim) with locked dependencies from `uv.lock`. Core: numpy, polars, pyarrow. `analysis` extra: xarray, netCDF4, h5netcdf, dask, scipy, pyproj, shapely, earthaccess, cdsapi, s3fs, matplotlib. `notebook` extra: ipykernel (the image registers it as Jupyter kernel `pyro`, "pyro (container)"). `dvc` extra: dvc with s3, webdav and ssh support.
 - Command-line tools: `cdo`, `nco`, `ncdump` and `rclone`.
-- Entry points: `pyro-sync` and `pyro-events`.
+- Entry points: `pyro-sync`, `pyro-events`, `pyro-match`, `pyro-ppe`, `pyro-icon`, `pyro-query`, `pyro-compare`, `pyro-regional`.
+
+## Notebooks (`notebooks/`)
+
+Two kernels work, in Cursor / VS Code ("Select Kernel") or JupyterLab:
+
+- **Project venv** (`.venv`, kernel "pyro"): `uv sync --all-extras` installs `ipykernel`. On Snellius `uv` is not a module; install it once with `python3 -m pip install --user uv` (puts it in `~/.local/bin`).
+- **Container** (kernel "pyro (apptainer)"): `scripts/apptainer_kernel.sh install $PYRO_SIF` writes a kernelspec to `~/.local/share/jupyter/kernels/pyro-apptainer` that starts `ipykernel` inside the image, binding `/gpfs`, `/projects` and `/scratch-shared` (`PYRO_APPTAINER_BIND`). It uses `--cleanenv` on purpose: the editor's environment carries host modules that break the container's libraries. Notebooks read paths from `config/local.env` themselves. The image needs `ipykernel`, which is in images built from `main` after this change; `scripts/apptainer_build.sh` refreshes the `.sif`.
+
+Run notebooks on a compute node (`salloc` / Open OnDemand), not a login node. Commit notebooks without outputs (`tests/test_notebooks.py` checks): their outputs contain restricted, event-keyed data.
 
 ### Updating the lock
 

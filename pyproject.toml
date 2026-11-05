@@ -27,6 +27,11 @@ analysis = [
     "s3fs>=2024.6",
     "matplotlib>=3.8",
 ]
+# Jupyter kernel for notebooks/ (Cursor / VS Code / JupyterLab on Open OnDemand).
+notebook = [
+    "ipykernel>=6.29",
+    "matplotlib>=3.8",
+]
 # Versioned data exchange with collaborators (`dvc pull`).
 dvc = [
     "dvc[s3,webdav,ssh,gdrive]>=3.50",
@@ -45,6 +50,8 @@ pyro-match = "pyro.match:main"
 pyro-icon = "pyro.icon_ppe:main"
 pyro-query = "pyro.store:main"
 pyro-ppe = "pyro.ppe:main"
+pyro-compare = "pyro.compare:main"
+pyro-regional = "pyro.regional:main"
 
 [build-system]
 requires = ["hatchling>=1.25"]

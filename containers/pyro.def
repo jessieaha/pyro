@@ -17,7 +17,8 @@ From: ghcr.io/jessieaha/pyro:latest
     exec "$@"
 
 %test
-    python -c "import pyro, xarray, netCDF4, pyarrow, earthaccess; print('pyro', pyro.__version__)"
+    python -c "import pyro, xarray, netCDF4, pyarrow, earthaccess, ipykernel, matplotlib; print('pyro', pyro.__version__)"
+    jupyter kernelspec list | grep -q '^ *pyro '
     rclone version | head -1
     cdo --version 2>&1 | head -1
 
