@@ -86,6 +86,27 @@ flowchart TD
 
 TROPOMI aerosol products are not used.
 
+## How the code runs
+
+One recipe (`Dockerfile`) and one pinned package list (`uv.lock`) produce one environment. GitHub builds it into an image; a laptop runs that image with Docker; Snellius has no Docker, so Apptainer converts the same image into a single file and runs it. The full guide, written for someone new to containers, is [`docs/environment.md`](docs/environment.md).
+
+```mermaid
+flowchart TD
+  src["Dockerfile + uv.lock in git"]
+  ci["GitHub Actions builds the image on main"]
+  reg[("ghcr.io/jessieaha/pyro:latest")]
+  lap["Laptop / Codespaces / Cursor<br/>Docker or the devcontainer"]
+  sif["Snellius / ADA: apptainer build → pyro.sif<br/>Slurm runs commands inside it"]
+  venv["Or skip the container:<br/>uv sync into .venv, same lock file"]
+
+  src --> ci --> reg
+  reg --> lap
+  reg --> sif
+  src --> venv
+```
+
+The image holds Python, the libraries and tools (`cdo`, `rclone`). It does not hold data or passwords: GPFS folders are handed in with `--bind`, and paths live in the gitignored `config/local.env`. On Snellius today the `.venv` route is enough; the `.sif` route is for batch jobs that must match the published image exactly.
+
 ## Repository layout
 
 | Path | What |
@@ -93,7 +114,7 @@ TROPOMI aerosol products are not used.
 | `docs/data_inventory.md` | What 2024–25 PPE / AeroCom / observation data exists on Snellius, and the gaps |
 | `docs/pipeline_plan.md` | Step 1 plan: event windows, model subsetting, satellite download, collocation to parquet |
 | `docs/storage_and_sync.md` | Storage comparison, recommendation, sync tool and DVC usage, licensing rules |
-| `docs/environment.md` | Devcontainer / Docker / Apptainer (Snellius, ADA) / Kubernetes |
+| `docs/environment.md` | Container setup explained from scratch: Docker, devcontainer, Apptainer on Snellius, `.venv` |
 | `src/pyro/sync.py`, `scripts/sync.sh` | `pyro-sync`: rclone-based, config-driven sync (dry-run default) |
 | `src/pyro/events.py` | `pyro-events`: event-table validation, windows, period coverage |
 | `src/pyro/match.py` | `pyro-match`: all events × SPEXone pixels, super-obs, PPE sampling through `pyro.ppe` (all members) |
