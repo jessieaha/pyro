@@ -4,7 +4,7 @@ This project compares pyroCb and matched non-pyroCb fires in AeroCom and multi-m
 
 Aerosol side: Jessie Zhang (VU Amsterdam). Fire side (event detection and matching): Jelle Kraak (VU Amsterdam).
 
-> **Status:** step 1 in progress. Working: the sync tool (Google Drive / S3 / Research Drive), event-table utilities, event × SPEXone matching with PPE sampling (`pyro-match`), a common reader for the ECHAM-HAM and ICON-HAM PPEs (`pyro-ppe`), the ICON-HAM PPE parquet store (`pyro-icon`) and in-place parquet queries (`pyro-query`). Corridors, VIIRS download and full collocation are planned in [`docs/pipeline_plan.md`](docs/pipeline_plan.md). All tables use polars.
+> **Status:** step 1 in progress. Working: the sync tool (Google Drive / S3 / Research Drive), event-table utilities, event × SPEXone matching with PPE sampling (`pyro-match`), a common reader for the ECHAM-HAM and ICON-HAM PPEs (`pyro-ppe`), the ICON-HAM PPE parquet store (`pyro-icon`), in-place parquet queries (`pyro-query`), per-event observation-vs-ensemble comparison (`pyro-compare`, `notebooks/event_comparison.ipynb`) and regional AeroVal statistics for pyroCb vs background scenes (`pyro-regional`). Corridors, VIIRS download and full collocation are planned in [`docs/pipeline_plan.md`](docs/pipeline_plan.md). All tables use polars.
 
 ## Project flowchart
 
@@ -39,6 +39,12 @@ flowchart TD
   ADAPT -->|"3-hourly, all members"| MATCH
   ADAPT -.->|"6-hourly / monthly, --allow-coarse"| MATCH
   MATCH --> COL
+  MATCH --> CMP["Per-event comparison<br/>pyro-compare, notebook: obs vs ensemble"]
+  SPEX --> REG["Regional statistics, AeroVal metrics<br/>pyro-regional: all vs background vs pyroCb"]
+  EV --> REG
+  ADAPT -->|"all members"| REG
+  CMP --> AGG
+  REG --> AGG
   ICON --> ICONPQ[("ICON-HAM parquet store<br/>pyro-icon, all variables")]
   EV --> WIN["Event windows and plume corridors<br/>onset -1 d to +10 d, ERA5 trajectories"]
   CT --> WIN
@@ -92,9 +98,12 @@ TROPOMI aerosol products are not used.
 | `src/pyro/events.py` | `pyro-events`: event-table validation, windows, period coverage |
 | `src/pyro/match.py` | `pyro-match`: all events × SPEXone pixels, super-obs, PPE sampling through `pyro.ppe` (all members) |
 | `src/pyro/ppe.py`, `config/ppe_sources.toml` | `pyro-ppe`: one reader/adapter for both PPEs (ybhatti ECHAM-HAM, hjia ICON-HAM) with a common schema |
+| `src/pyro/compare.py`, `notebooks/event_comparison.ipynb` | `pyro-compare`: per-event SPEXone super-obs vs ensemble median / 5–95 % / control, metrics and figures |
+| `src/pyro/regional.py`, `config/regions.toml` | `pyro-regional`: AeroVal statistics per region for the regional average, background and pyroCb-affected scenes, per member |
 | `src/pyro/icon_ppe.py` | `pyro-icon`: ICON-HAM PPE netCDF → partitioned parquet store, with verification |
 | `src/pyro/store.py` | `pyro-query`: polars queries on local parquet or in place on Drive via `rclone serve s3` |
-| `scripts/gdrive_setup.sh` | Link the VU Google Drive to rclone (interactive, token stays outside the repo) |
+| `scripts/gdrive_setup.sh` | Link the VU Google Drive to rclone, or repair a remote saved without token (token stays outside the repo) |
+| `scripts/apptainer_kernel.sh` | Jupyter kernel that runs inside the Apptainer image |
 | `scripts/scratch_keepalive.sh` | Single self-resubmitting job that refreshes scratch every 12 days |
 | `config/` | `sync.toml` (datasets, remotes), `*.example` templates; `local.env` is gitignored |
 | `Dockerfile`, `.devcontainer/`, `containers/`, `k8s/` | Portable environment |
@@ -112,6 +121,8 @@ scripts/gdrive_setup.sh                   # once: link the VU Google Drive
 scripts/sync.sh push icon_ppe -r gdrive   # dry run
 uv run pyro-ppe list                      # configured PPE sources
 uv run pyro-match "$PYRO_DATA_ROOT/events/<event_table>.csv"
+uv run pyro-compare                       # per-event figures from the pyro-match output
+uv run pyro-regional "$PYRO_DATA_ROOT/events/<event_table>.csv"   # regional statistics
 ```
 
 ## Data and credentials policy

@@ -154,6 +154,38 @@ sbatch --account="$PYRO_SLURM_ACCOUNT" scripts/slurm/match_spexone.sbatch \
 - First run on the 2024 boreal table: every region has SPEXone matches, including all Alaska events. The only events without any SPEXone pixel are the earliest ones whose whole window falls in May 2024, before the local SPEXone extracts start (June 2024). About half the events have smoke-laden pixels within 150 km in the first two days. Only events from August onwards can be compared with the 3-hourly PPE.
 - Caveats: distance rings are not plume corridors (§1a), so a smoky pixel 500 km away may belong to another fire; the AOD threshold is a screening aid, not attribution. The PPE period starts 2024-08-01, so June–July events have SPEXone matches but no 3-hourly model counterpart (inventory §6).
 
+## 1f. Per-event comparison (implemented: `pyro-compare`, `notebooks/event_comparison.ipynb`)
+
+Reads the `pyro-match` outputs and, for every event and PPE source, puts the SPEXone super-obs next to the ensemble median, 5–95 % range and control member (AOD, AAOD, SSA at 550 nm; AE 440–670 nm), against days since onset.
+
+```bash
+pyro-compare                                  # all sources found in derived/spexone_event_match
+pyro-compare --ppe ybhatti_pd_3h --event <pcb_id>
+```
+
+- `comparison.parquet`: one row per (event, source, super-obs, variable) with `obs`, `obs_unc`, `model_p05/median/p95`, `model_control`, `age_days`, `resolution`, `ppe_source`, `product`.
+- `metrics.parquet/csv` per (event, source, variable): `n_superobs`, `bias`, `log10_ratio` (AOD, AAOD), `frac_in_5_95` (share of observations inside the ensemble 5–95 % range), `bias_control`. `coverage.csv`: super-obs per event and source, all events listed.
+- `figures/<pcb_id>.png`: pixel map with fire position and 150/500 km rings, and observation vs ensemble time series; `figures/overview.png`: observed vs ensemble median over all events. Monthly sources are drawn as context with their own (monthly-cell) super-obs.
+- The notebook calls the same functions interactively and adds the regional section (§1g). Commit it without outputs.
+- First run (2024 boreal table): 71 of 73 events have super-obs for the ICON-HAM monthly PPE, 16 for the 3-hourly ECHAM-HAM PPE. Output in `$PYRO_DATA_ROOT/derived/event_comparison` (restricted).
+
+## 1g. Regional statistics: pyroCb scenes vs the regional average (implemented: `pyro-regional`)
+
+Puts the event comparison in context, in the style of AeroVal: does the model do worse in pyroCb-affected scenes than in the same region generally?
+
+```bash
+pyro-regional "$PYRO_DATA_ROOT/events/<table>.csv"                                  # ECHAM 3-hourly
+pyro-regional "$PYRO_DATA_ROOT/events/<table>.csv" --ppe ybhatti_pd_3h \
+    --ppe hjia_pd_2024_25_monthly --allow-coarse                                     # both PPEs
+```
+
+- **Regions:** boxes in `config/regions.toml` (Alaska, Canada, Northern Asia; non-overlapping, names as in the event table's `region`).
+- **Period:** first event window start to last window end (override `--start/--end`); statistics for the whole season and per month.
+- **Categories:** every SPEXone pixel in a region box is `pyrocb` if it lies within `--radius-km` (500) of any event's `lon_c`/`lat_c` inside that event's window (onset − 1 d to + 10 d, the `pyro-match` rule), otherwise `background`; `all` is the regional average. Pixels are averaged to super-obs per (region, category, model step, model cell), so the two categories never share a super-obs; then every member is sampled through `pyro.ppe`.
+- **Statistics** (AeroVal / pyaerocom definitions) per (region, category, period, source, variable): `n`, `mean_obs`, `mean_mod`, `bias`, `nmb`, `mnmb`, `fge`, `rmse`, `r`, `r_spearman`, for the ensemble median and the control (`stats`), for every member (`member_stats`) and as the 5/50/95 % of each statistic across members (`member_summary`).
+- `figures/regions_season.png`: bars per region for all / background / pyroCb (NMB, RMSE, R), whiskers = member 5–95 %. The notebook adds pyroCb − background differences per month.
+- Caveats: a 500 km ring is not a plume corridor (§1a), so `pyrocb` includes some unaffected pixels and `background` some smoke from other fires; plume corridors replace the ring once they exist. ICON-HAM monthly means cannot resolve an event; their categories differ only through where and when SPEXone sampled.
+
 ## 2. Where each step runs
 
 | Step | Runs on | Reads | Writes | Synced? |
@@ -163,6 +195,8 @@ sbatch --account="$PYRO_SLURM_ACCOUNT" scripts/slurm/match_spexone.sbatch \
 | 1c satellite download | Snellius (`staging`) or anywhere | NASA / NOAA / Copernicus | `raw/satellite` | optional (re-downloadable) |
 | 1d collocation | Snellius or anywhere with the subsets | 1a–1c | `derived/collocation` | restricted |
 | 1e event × SPEXone match | Snellius (`rome`, one job) | event table, SPEXone extracts, PPE sources via `pyro.ppe` | `derived/spexone_event_match` | restricted (private Drive / S3) |
+| 1f per-event comparison | anywhere with the 1e output (notebook or `pyro-compare`) | `derived/spexone_event_match` | `derived/event_comparison` | restricted |
+| 1g regional statistics | Snellius (`rome`, one job; `scripts/slurm/regional_stats.sbatch`) | event table, SPEXone extracts, PPE sources | `derived/regional_stats` | restricted |
 | sync | Snellius `staging` or anywhere | — | remotes | `pyro-sync` / DVC |
 
 ## 3. Later: per-event aggregation (outline only)
