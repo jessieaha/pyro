@@ -8,9 +8,17 @@ from pyro import compare
 ONSET = dt.datetime(2024, 8, 10, 0, tzinfo=dt.UTC)
 
 
+def test_events_use_3h_sources_only_by_default(compare_match_dir):
+    assert compare.discover_sources(compare_match_dir) == ["echam_3h"]
+    assert compare.discover_sources(compare_match_dir, include_coarse=True) == [
+        "echam_3h",
+        "icon_mon",
+    ]
+    assert set(compare.load(compare_match_dir).table["dataset"]) == {"echam_3h"}
+
+
 def test_load_joins_obs_and_ensemble(compare_match_dir):
-    cmp = compare.load(compare_match_dir)
-    assert compare.discover_sources(compare_match_dir) == ["echam_3h", "icon_mon"]
+    cmp = compare.load(compare_match_dir, ["echam_3h", "icon_mon"])
     assert cmp.events == ["EV1"]
     t = cmp.table
     e = t.filter((pl.col("dataset") == "echam_3h") & (pl.col("variable") == "aod550")).sort(
@@ -34,7 +42,7 @@ def test_load_joins_obs_and_ensemble(compare_match_dir):
 
 
 def test_metrics(compare_match_dir):
-    m = compare.metrics(compare.load(compare_match_dir).table)
+    m = compare.metrics(compare.load(compare_match_dir, ["echam_3h", "icon_mon"]).table)
     r = m.filter((pl.col("dataset") == "echam_3h") & (pl.col("variable") == "aod550")).row(
         0, named=True
     )
@@ -49,7 +57,7 @@ def test_metrics(compare_match_dir):
 
 
 def test_coverage_lists_every_event(compare_match_dir):
-    cov = compare.coverage(compare.load(compare_match_dir))
+    cov = compare.coverage(compare.load(compare_match_dir, ["echam_3h", "icon_mon"]))
     assert cov["pcb_id"].to_list() == ["EV2", "EV1"]
     ev1 = cov.filter(pl.col("pcb_id") == "EV1").row(0, named=True)
     assert ev1["echam_3h"] == 3 and ev1["icon_mon"] == 1

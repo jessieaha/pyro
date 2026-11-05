@@ -6,8 +6,13 @@ SPEXone RemoTAP L2 pixels (land + ocean) inside the event window and within
 
 ``model``: for each PPE source (``--ppe``, read through ``pyro.ppe``) average the
 matched pixels into super-obs per (event, model time step, model cell) and sample
-every member there, in the common PPE schema. Only 3-hourly sources are used
-unless ``--allow-coarse`` is given.
+every member there, in the common PPE schema. Events are matched with 3-hourly
+output only (``match_event_model``); monthly and 6-hourly sources are for the
+regional statistics (``pyro-regional``), not for events.
+
+The window is ``onset - pre_hours`` to ``onset + max_hours_after`` (CLI
+``--pre-hours``, ``--max-hours-after``); a pixel counts when the SPEXone swath
+passed within ``--model-km`` of the fire position inside it.
 
 Outputs contain event identifiers and are restricted data (written under
 ``$PYRO_DATA_ROOT/derived``, never committed).
@@ -282,6 +287,39 @@ def sample_model(
     return df.join(ref.select("point_id", *keys), on="point_id").select(*keys, *df.columns)
 
 
+def match_event_model(
+    events: pl.DataFrame,
+    spex: pl.DataFrame,
+    src: ppe.Source,
+    *,
+    radius_km: float = 500.0,
+    pre_hours: float = 24.0,
+    max_hours_after: float = 240.0,
+    variables: list[str] | None = None,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """SPEXone super-obs and all-member samples of a 3-hourly source for every event.
+
+    Pixels count when they lie within ``radius_km`` of ``lon_c``/``lat_c`` and
+    between ``pre_hours`` before and ``max_hours_after`` after onset. Each pixel is
+    put on the nearest 3-hourly model step (at most 1.5 h away) and model cell, then
+    averaged to super-obs. Returns ``(superobs, model)``; ``model`` has one row per
+    (super-obs, member) in the common ``pyro.ppe`` schema.
+    """
+    if src.resolution != "3h":
+        raise ValueError(
+            f"{src.key} is {src.resolution}; events are matched with 3-hourly output only"
+        )
+    ev = add_windows(events, pre_hours / 24.0, max_hours_after / 24.0)
+    m = match_events(ev, spex, radius_km)
+    if m.is_empty():
+        return pl.DataFrame(), pl.DataFrame()
+    m = m.filter(pl.col("dt_hours").is_between(-pre_hours, max_hours_after))
+    so = superobs(m, src, radius_km)
+    if so.is_empty():
+        return so, pl.DataFrame()
+    return so, sample_model(so, src, variables)
+
+
 # --------------------------------------------------------------------------- CLI
 
 
@@ -294,8 +332,10 @@ def _derived(root: str | None, sub: str) -> Path:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="pyro-match", description=__doc__.splitlines()[0])
     p.add_argument("events", type=Path, help="event table (CSV or parquet)")
-    p.add_argument("--pre-days", type=float, default=1.0)
-    p.add_argument("--post-days", type=float, default=10.0)
+    p.add_argument("--pre-hours", type=float, default=24.0, help="hours before onset")
+    p.add_argument(
+        "--max-hours-after", type=float, default=240.0, help="hours after onset (default 240)"
+    )
     p.add_argument("--max-km", type=float, default=float(max(RADII_KM)))
     p.add_argument("--spexone-root", type=Path, default=os.environ.get("SPEXONE_EXTRACT_ROOT"))
     p.add_argument("--out", type=Path, default=None)
@@ -308,19 +348,14 @@ def main(argv: list[str] | None = None) -> int:
         help=f"PPE source key from config/ppe_sources.toml (repeatable; default {DEFAULT_PPE})",
     )
     p.add_argument("--ppe-config", type=Path, default=None)
-    p.add_argument(
-        "--allow-coarse",
-        action="store_true",
-        help="also match sources coarser than 3-hourly (6-hourly, monthly); results are "
-        "flagged by the 'resolution' column",
-    )
     a = p.parse_args(argv)
     if a.spexone_root is None:
         p.error("--spexone-root or SPEXONE_EXTRACT_ROOT is required")
     out = a.out or _derived(os.environ.get("PYRO_DATA_ROOT"), "spexone_event_match")
     out.mkdir(parents=True, exist_ok=True)
 
-    events = add_windows(load_events(a.events), a.pre_days, a.post_days)
+    raw_events = load_events(a.events)
+    events = add_windows(raw_events, a.pre_hours / 24.0, a.max_hours_after / 24.0)
     spex = load_spexone(a.spexone_root, events, a.max_km)
     print(f"{len(events)} events, {len(spex)} SPEXone pixels in the event band", file=sys.stderr)
     matches = match_events(events, spex, a.max_km)
@@ -353,18 +388,25 @@ def main(argv: list[str] | None = None) -> int:
         for key in a.ppe or DEFAULT_PPE:
             if key not in cfg:
                 p.error(f"unknown PPE source {key!r}; configured: {sorted(cfg)}")
-            if cfg[key].get("resolution") != "3h" and not a.allow_coarse:
+            if cfg[key].get("resolution") != "3h":
                 p.error(
-                    f"{key} is {cfg[key].get('resolution')}; satellite matching uses "
-                    "3-hourly output only (override with --allow-coarse)"
+                    f"{key} is {cfg[key].get('resolution')}; events are matched with "
+                    "3-hourly output only (coarser sources: pyro-regional)"
                 )
             src = ppe.open_source(key, a.ppe_config)
-            so = superobs(matches, src, a.model_km) if not matches.is_empty() else pl.DataFrame()
+            so, model = match_event_model(
+                raw_events,
+                spex,
+                src,
+                radius_km=a.model_km,
+                pre_hours=a.pre_hours,
+                max_hours_after=a.max_hours_after,
+            )
             print(f"{key}: {len(so)} super-obs within {a.model_km:.0f} km", file=sys.stderr)
             if so.is_empty():
                 continue
             so.write_parquet(out / f"superobs_{key}.parquet", compression="zstd")
-            sample_model(so, src).write_parquet(out / f"model_{key}.parquet", compression="zstd")
+            model.write_parquet(out / f"model_{key}.parquet", compression="zstd")
     return 0
 
 

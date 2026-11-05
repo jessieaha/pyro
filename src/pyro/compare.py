@@ -60,11 +60,16 @@ class Comparison:
         return pl.scan_parquet(self.pixels_path).filter(pl.col("pcb_id") == pcb_id).collect()
 
 
-def discover_sources(match_dir: Path) -> list[str]:
+def discover_sources(match_dir: Path, include_coarse: bool = False) -> list[str]:
+    """PPE source keys with super-obs and model samples in ``match_dir``; only
+    3-hourly sources unless ``include_coarse`` (events are matched at 3 h)."""
     keys = []
     for f in sorted(match_dir.glob("superobs_*.parquet")):
         m = SUPEROBS_RE.match(f.name)
-        if m and (match_dir / f"model_{m.group(1)}.parquet").exists():
+        if not (m and (match_dir / f"model_{m.group(1)}.parquet").exists()):
+            continue
+        res = pl.scan_parquet(f).select(pl.col("resolution").first()).collect().item()
+        if include_coarse or res == "3h":
             keys.append(m.group(1))
     return keys
 

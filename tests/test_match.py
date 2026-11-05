@@ -119,3 +119,27 @@ def test_superobs_maps_to_model_grid_and_step(evs, spex):
     assert m2["od550aer"][0] == pytest.approx(0.3)
     assert m2["ssa550aer"][0] == pytest.approx(1 - 0.01 / 0.3, rel=1e-5)
     assert model.filter(pl.col("member") == 0)["is_control"].all()
+
+
+def test_match_event_model_hours_after_and_3h_only(tmp_path, spex):
+    p = tmp_path / "e.csv"
+    p.write_text(SAMPLE)
+    ev = events.load_events(p)
+    src = FakeT63()
+    # EV_CA onset 08-10 22Z: 3 pixels 22 h later (56 km), 1 pixel 142 h later (445 km)
+    so, model = match.match_event_model(ev, spex, src, radius_km=500, max_hours_after=240)
+    ca = so.filter(pl.col("pcb_id") == "EV_CA")
+    assert ca["n_pix"].sum() == 4 and ca.height == 2
+    assert model.height == so.height * 3
+
+    so48, _ = match.match_event_model(ev, spex, src, radius_km=500, max_hours_after=48)
+    assert so48.filter(pl.col("pcb_id") == "EV_CA")["n_pix"].to_list() == [3]
+
+    # EV_AS pixel is 9 h before onset: kept with pre_hours=24, dropped with 0
+    assert "EV_AS" in set(so48["pcb_id"])
+    so0, _ = match.match_event_model(ev, spex, src, pre_hours=0, max_hours_after=48)
+    assert "EV_AS" not in set(so0["pcb_id"])
+
+    src.resolution = "1mon"
+    with pytest.raises(ValueError, match="3-hourly"):
+        match.match_event_model(ev, spex, src)
